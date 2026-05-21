@@ -45,7 +45,7 @@ npm start -- \
   --target-system symptomscreen
 ```
 
-If you provide a value in `.env` or through a flag, the CLI uses it directly. If something is missing, the CLI asks for it.
+If the base URL, API key, target system, or interpreter mode is missing, the CLI asks for it before starting the session. It does not ask for patient relationship, date of birth, sex assigned at birth, or an initial managed-mode caller message during setup. If you already know those facts, provide them in `.env` or through flags. Otherwise the example starts the Routing API session immediately, shows the first patient assessment question, and lets the API ask for those facts later only if the routing flow needs them.
 
 ## What This Demonstrates
 
@@ -66,6 +66,16 @@ POST /routing/sessions
 ```
 
 The start request includes your API key as `organizationKey`:
+
+```json
+{
+  "organizationKey": "your-key-here",
+  "targetSystem": "symptomscreen",
+  "interpreterMode": "byo"
+}
+```
+
+If your app already has patient facts before the chat begins, you can send them as `knownFacts`. The command-line example only includes this object when you provide the facts through flags or environment variables:
 
 ```json
 {
@@ -123,6 +133,8 @@ The CLI understands these environment variables:
 | `ROUTING_MANAGED_INITIAL_TEXT` | Optional first message for managed mode. |
 
 The older name `ROUTING_ORGANIZATION_KEY` also works if your environment already uses that term.
+
+The optional patient facts are prefilled facts, not startup prompts. Leaving them unset gives the Routing API control over whether and when to ask for them during the actual assessment.
 
 ## Commands During A Session
 
@@ -196,4 +208,3 @@ If the CLI says the API returned an unexpected response, check that your base UR
 If the API rejects the start request, check that `ROUTING_API_KEY` is set to the key you were given.
 
 If managed mode stops after setup turns, your Routing API deployment may not be configured for managed text interpretation. BYO mode is a good way to test the same chat flow while keeping model calls in your own environment.
-

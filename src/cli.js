@@ -31,7 +31,6 @@ import {
   prettyJson,
   redactCredentials,
   routingChatDefaultsFromEnv,
-  selectedGuideTargets,
   targetSystemLabel
 } from './flow.js';
 
@@ -47,9 +46,9 @@ Options:
   --api-key <key>                  Routing API key. Sent as organizationKey in the start request.
   --target-system <value>          symptomscreen or cleartriage
   --mode <value>                   managed or byo
-  --date-of-birth <date>           YYYY-MM-DD or MM/DD/YYYY
-  --sex-assigned-at-birth <value>  female, male, or unknown
-  --relationship-to-patient <val>  self, parent, caregiver, clinician, and related values
+  --date-of-birth <date>           Optional known fact, YYYY-MM-DD or MM/DD/YYYY
+  --sex-assigned-at-birth <value>  Optional known fact: female, male, or unknown
+  --relationship-to-patient <val>  Optional known fact, such as self, parent, or caregiver
   --managed-initial-text <text>    Optional first caller message for managed mode
   --debug / --no-debug             Request managed-interpretation debug diagnostics
 
@@ -110,6 +109,15 @@ const suppliedSetupFields = (...sources) =>
 
 const pathForHistoryLabel = label =>
   label === 'Start session' ? '/routing/sessions' : '/routing/turns';
+
+const printSection = title => {
+  console.log('');
+  console.log(`[${title}]`);
+};
+
+const printField = (label, value) => {
+  console.log(`${label}: ${value}`);
+};
 
 const loadDotEnvIfExists = (path = '.env') => {
   if (!existsSync(path)) return;
@@ -195,16 +203,12 @@ class RoutingChatCli {
   }
 
   printIntro() {
-    console.log('');
+    printSection('Session');
     console.log('Routing API chat example');
-    console.log(`API: ${this.config.baseUrl}`);
-    console.log(
-      `Mode: ${this.config.interpreterMode}; target: ${targetSystemLabel(
-        this.config.targetSystem
-      )}`
-    );
+    printField('API', this.config.baseUrl);
+    printField('Mode', this.config.interpreterMode);
+    printField('Target system', targetSystemLabel(this.config.targetSystem));
     console.log('Type :help during a turn for commands.');
-    console.log('');
   }
 
   record(label, request, response) {
@@ -221,47 +225,69 @@ class RoutingChatCli {
 
   renderResponse(response) {
     const action = response.nextAction;
-    console.log('');
-    console.log(`Assistant action: ${action.type}`);
 
     if (action.type === 'ask') {
+      printSection('Assistant');
       this.renderAskAction(action);
     } else if (action.type === 'say') {
+      printSection('Assistant');
       console.log(action.message);
     } else if (action.type === 'resolved') {
+      printSection('Routing result');
       this.renderTargets(action.targets);
       if (action.screening) {
-        console.log('');
-        console.log('Screening outcome');
-        console.log(`Priority: ${action.screening.priorityId}`);
-        console.log(`Outcome: ${action.screening.outcomeText}`);
+        printField('Screening priority', action.screening.priorityId);
+        printField('Screening outcome', action.screening.outcomeText);
         if (action.screening.screeningNote?.trim()) {
-          console.log('Screening note:');
+          console.log('');
+          console.log('Screening note');
           console.log(action.screening.screeningNote);
         }
       }
     } else if (action.type === 'handoff') {
-      console.log(`Urgency: ${action.urgency}`);
+      printSection('Assistant');
       console.log(action.message);
-      if (action.targets) this.renderTargets(action.targets);
     } else {
+      printSection('Assistant');
       console.log(action.message);
-      console.log(action.retryable ? 'Retryable: yes' : 'Retryable: no');
     }
 
-    const selectedGuides = selectedGuideTargets(action);
-    if (selectedGuides.length > 0) {
-      console.log('');
-      console.log('Selected SymptomScreen guides');
-      for (const guide of selectedGuides) {
-        console.log(`- ${guide.title} (#${guide.id})`);
+    this.renderResponseMetadata(response, action);
+  }
+
+  renderResponseMetadata(response, action) {
+    printSection('API metadata');
+    printField('Action', action.type);
+
+    if (action.type === 'ask') {
+      printField('Question id', action.question.id);
+      printField('Input kind', action.question.inputKind);
+      if (action.llmTask && this.config.interpreterMode === 'byo') {
+        printField(
+          'BYO model task',
+          `${action.llmTask.schemaName} ${action.llmTask.schemaVersion}`
+        );
+        printField('Submit model JSON as', action.llmTask.resultField);
+      }
+    }
+
+    if (action.type === 'error') {
+      printField('Retryable', action.retryable ? 'yes' : 'no');
+    }
+
+    if (action.type === 'handoff') {
+      printField('Urgency', action.urgency);
+      if (action.targets?.length) {
+        console.log('');
+        this.renderTargets(action.targets);
       }
     }
 
     if (response.debug?.managedInterpretationDiagnostics?.length) {
       console.log('');
-      console.log(
-        `Debug diagnostics: ${response.debug.managedInterpretationDiagnostics.length} item(s). Type :debug to inspect.`
+      printField(
+        'Debug diagnostics',
+        `${response.debug.managedInterpretationDiagnostics.length} item(s); type :debug to inspect`
       );
     }
   }
@@ -271,26 +297,24 @@ class RoutingChatCli {
     if (action.question.helperText) console.log(action.question.helperText);
 
     if (action.question.inputKind === 'single_select') {
-      console.log('');
-      console.log('Choices');
+      printSection('Answer choices');
       action.question.options?.forEach((option, index) => {
-        console.log(`${index + 1}. ${option.label} (${option.id})`);
+        console.log(`${index + 1}. ${option.label}`);
+        console.log(`   id: ${option.id}`);
       });
-    }
-
-    if (action.llmTask && this.config.interpreterMode === 'byo') {
-      console.log('');
-      console.log(
-        `BYO model task: ${action.llmTask.schemaName} ${action.llmTask.schemaVersion}; submit as ${action.llmTask.resultField}.`
-      );
     }
   }
 
   renderTargets(targets) {
-    console.log('');
+    if (!targets?.length) {
+      console.log('No routing targets were returned.');
+      return;
+    }
+
     console.log('Targets');
     for (const target of targets ?? []) {
-      console.log(`- ${target.title} (${target.targetSystem}:${target.id})`);
+      console.log(`${target.title}`);
+      console.log(`   target: ${target.targetSystem}:${target.id}`);
     }
   }
 
@@ -310,7 +334,9 @@ class RoutingChatCli {
         action.question.inputKind === 'single_select'
           ? 'Type caller text, an option number, or an option id'
           : 'Type the caller reply';
-      const line = await this.askForValue(`${hint}> `, { action });
+      const line = await this.askForValue(`[Patient input] ${hint}> `, {
+        action
+      });
       if (line === null) return null;
 
       const direct = this.directCommandRequest(line, action, sessionToken);
@@ -348,7 +374,7 @@ class RoutingChatCli {
       }
 
       const callerText = await this.askForValue(
-        'Patient or caregiver reply for your model> ',
+        '[Patient input] Patient or caregiver reply for your model> ',
         { action }
       );
       if (callerText === null) return null;
@@ -366,7 +392,7 @@ class RoutingChatCli {
   async collectByoDirectAnswer(action, sessionToken) {
     if (action.question.inputKind === 'single_select') {
       const value = await this.askForValue(
-        'Choose an option, type :llm for the BYO model, or type caller text> ',
+        '[Patient input] Choose an option, type :llm for the BYO model, or type caller text> ',
         { action }
       );
       if (value === null) return null;
@@ -394,7 +420,7 @@ class RoutingChatCli {
 
     if (action.question.inputKind === 'number') {
       const value = await this.askForValue(
-        'Enter a number, type :llm for the BYO model, or type caller text> ',
+        '[Patient input] Enter a number, type :llm for the BYO model, or type caller text> ',
         { action }
       );
       if (value === null) return null;
@@ -421,7 +447,7 @@ class RoutingChatCli {
 
     if (action.question.inputKind === 'date') {
       const value = await this.askForValue(
-        'Enter a date, type :llm for the BYO model, or type caller text> ',
+        '[Patient input] Enter a date, type :llm for the BYO model, or type caller text> ',
         { action }
       );
       if (value === null) return null;
@@ -455,7 +481,7 @@ class RoutingChatCli {
       return null;
     }
 
-    console.log('');
+    printSection('BYO model prompt');
     console.log('Run this prompt in your own model workflow:');
     console.log('');
     console.log(
@@ -553,7 +579,7 @@ class RoutingChatCli {
 
   async askForJsonBlock(context) {
     console.log(
-      `Paste ${context.action?.llmTask?.resultField ?? 'result'} JSON. End multi-line JSON with a single "." line.`
+      `[Model result] Paste ${context.action?.llmTask?.resultField ?? 'result'} JSON. End multi-line JSON with a single "." line.`
     );
 
     const lines = [];
@@ -604,6 +630,7 @@ class RoutingChatCli {
       return 'handled';
     }
     if (command === ':history') {
+      printSection('API history');
       console.log(prettyJson(redactCredentials(context.history)));
       return 'handled';
     }
@@ -615,14 +642,17 @@ class RoutingChatCli {
     }
 
     if (command === ':request') {
+      printSection('Last API request');
       console.log(prettyJson(redactCredentials(last.request)));
       return 'handled';
     }
     if (command === ':response') {
+      printSection('Last API response');
       console.log(prettyJson(redactCredentials(last.response)));
       return 'handled';
     }
     if (command === ':curl') {
+      printSection('Curl for last API request');
       console.log(
         buildCurl({
           baseUrl: context.baseUrl,
@@ -634,6 +664,7 @@ class RoutingChatCli {
       return 'handled';
     }
     if (command === ':debug') {
+      printSection('Managed interpretation diagnostics');
       console.log(
         prettyJson(last.response?.debug?.managedInterpretationDiagnostics ?? [])
       );
@@ -643,6 +674,7 @@ class RoutingChatCli {
       if (!context.action?.llmTask) {
         console.log('No BYO model task is active.');
       } else {
+        printSection('BYO model prompt');
         console.log(
           buildCompleteByoPrompt({
             callerText: context.callerText ?? '',
@@ -657,6 +689,7 @@ class RoutingChatCli {
       if (!context.action?.llmTask) {
         console.log('No BYO response schema is active.');
       } else {
+        printSection('BYO response schema');
         console.log(prettyJson(context.action.llmTask.responseSchema));
       }
       return 'handled';
@@ -699,21 +732,6 @@ const askRequired = async ({ defaultValue, label, rl }) => {
     const value = await askOptional({ defaultValue, label, rl });
     if (value?.trim()) return value.trim();
     console.log('This value is required.');
-  }
-};
-
-const askDateOfBirth = async ({ defaultValue, rl }) => {
-  while (true) {
-    const value = await askOptional({
-      defaultValue,
-      label: 'Known date of birth, optional',
-      rl
-    });
-    if (!value) return undefined;
-
-    const normalized = normalizeDateInput(value);
-    if (normalized) return normalized;
-    console.log('Use YYYY-MM-DD or MM/DD/YYYY, and do not use a future date.');
   }
 };
 
@@ -765,11 +783,9 @@ const collectConfig = async (flags, rl, suppliedFields) => {
           rl
         });
 
-  const dateOfBirth =
-    (suppliedFields.has('dateOfBirth')
-      ? normalizeDateInput(flags.dateOfBirth ?? '')
-      : await askDateOfBirth({ defaultValue: flags.dateOfBirth, rl })) ??
-    undefined;
+  const dateOfBirth = suppliedFields.has('dateOfBirth')
+    ? (normalizeDateInput(flags.dateOfBirth ?? '') ?? undefined)
+    : undefined;
   if (suppliedFields.has('dateOfBirth') && !dateOfBirth) {
     throw new Error(
       'Date of birth must be YYYY-MM-DD or MM/DD/YYYY, and cannot be in the future.'
@@ -779,37 +795,11 @@ const collectConfig = async (flags, rl, suppliedFields) => {
   const sexAssignedAtBirth =
     suppliedFields.has('sexAssignedAtBirth') && flags.sexAssignedAtBirth
       ? flags.sexAssignedAtBirth
-      : await selectValue({
-          defaultValue: flags.sexAssignedAtBirth ?? '',
-          label: 'Known sex assigned at birth',
-          options: [
-            { label: 'Ask later', value: '' },
-            { label: 'Female', value: 'female' },
-            { label: 'Male', value: 'male' },
-            { label: 'Unknown', value: 'unknown' }
-          ],
-          rl
-        });
+      : undefined;
   const relationshipToPatient =
     suppliedFields.has('relationshipToPatient') && flags.relationshipToPatient
       ? flags.relationshipToPatient
-      : await selectValue({
-          defaultValue: flags.relationshipToPatient ?? '',
-          label: 'Known relationship to patient',
-          options: [
-            { label: 'Ask later', value: '' },
-            { label: 'Self', value: 'self' },
-            { label: 'Parent', value: 'parent' },
-            { label: 'Guardian', value: 'guardian' },
-            { label: 'Spouse or partner', value: 'spouse_or_partner' },
-            { label: 'Family member', value: 'family_member' },
-            { label: 'Caregiver', value: 'caregiver' },
-            { label: 'Clinician', value: 'clinician' },
-            { label: 'Other', value: 'other' },
-            { label: 'Unknown', value: 'unknown' }
-          ],
-          rl
-        });
+      : undefined;
 
   const knownFacts = knownFactsFromValues({
     dateOfBirth,
@@ -820,11 +810,7 @@ const collectConfig = async (flags, rl, suppliedFields) => {
     interpreterMode === 'managed'
       ? suppliedFields.has('managedInitialText')
         ? flags.managedInitialText
-        : await askOptional({
-            defaultValue: flags.managedInitialText,
-            label: 'Initial caller message, optional',
-            rl
-          })
+        : undefined
       : undefined;
 
   return {
