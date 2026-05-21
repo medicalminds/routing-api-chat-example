@@ -194,6 +194,8 @@ export const buildCompleteByoPrompt = ({ callerText, question, task }) =>
     `Submit the returned JSON as ${task.resultField}.`
   ].join('\n');
 
+// The Routing API tells BYO callers which top-level field should receive
+// the model's JSON result for the active turn.
 export const buildByoLlmAdvanceRequest = ({ resultJson, sessionToken, task }) => {
   const parsed = parseJsonInput(resultJson);
 
@@ -206,6 +208,8 @@ export const buildByoLlmAdvanceRequest = ({ resultJson, sessionToken, task }) =>
   return { sessionToken, interpretation: parsed };
 };
 
+// SymptomScreen screening questions use numeric ids; routing questions use
+// string ids and are submitted through the structured-answer shape.
 export const isScreeningQuestion = question => typeof question.id === 'number';
 
 export const isSymptomScreeningAnswerValue = value =>
@@ -242,6 +246,7 @@ export const buildOptionAdvanceRequest = ({ optionId, question, sessionToken }) 
     return null;
   }
 
+  // Screening choices have a narrower API shape than route-question choices.
   if (isScreeningQuestion(question)) {
     if (!isSymptomScreeningAnswerValue(optionId)) return null;
     return {
@@ -522,4 +527,3 @@ export const routingChatDefaultsFromEnv = env => ({
     env[ROUTING_ENV.debugManagedInterpretation]
   )
 });
-

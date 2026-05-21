@@ -363,6 +363,8 @@ class RoutingChatCli {
     }
   }
 
+  // BYO mode first accepts direct structured answers for typed questions; :llm
+  // skips that shortcut and forces the external-model prompt workflow.
   async collectByoTurn(action, sessionToken) {
     while (true) {
       const request = await this.collectByoDirectAnswer(action, sessionToken);
@@ -577,6 +579,8 @@ class RoutingChatCli {
     }
   }
 
+  // Accept one-line JSON immediately. If the first line is not complete JSON,
+  // continue collecting a multi-line block until the user enters a single ".".
   async askForJsonBlock(context) {
     console.log(
       `[Model result] Paste ${context.action?.llmTask?.resultField ?? 'result'} JSON. End multi-line JSON with a single "." line.`

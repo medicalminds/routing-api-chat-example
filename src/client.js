@@ -52,6 +52,8 @@ const readJsonResponse = async response => {
   }
 };
 
+// Treat error-shaped JSON as a Routing API error even if the HTTP status is
+// unexpectedly successful, so CLI callers get the same error path either way.
 const looksLikeApiError = value =>
   value &&
   typeof value === 'object' &&
@@ -116,4 +118,3 @@ export const createRoutingApiClient = (options = {}) => ({
   startSession: body => postJson(options, '/routing/sessions', body),
   advanceSession: body => postJson(options, '/routing/turns', body)
 });
-
