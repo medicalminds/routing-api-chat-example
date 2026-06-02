@@ -90,6 +90,8 @@ If your app already has patient facts before the chat begins, you can send them 
 }
 ```
 
+New integrations should prefer sending setup facts on `POST /routing/sessions`. Current Routing API deployments also accept compatible `knownFacts` on `POST /routing/turns` for older stateless data-action mappings that carry flattened facts on every turn. The API merges those facts only when they fill a missing value or repeat the value already stored in the session token. If a turn tries to change an established date of birth, age, sex assigned at birth, or relationship, the API rejects that turn instead of silently changing the patient context.
+
 Continue a session:
 
 ```http
@@ -116,6 +118,8 @@ The response always includes a new `sessionToken` and a `nextAction`. The action
 | `resolved` | Show the target or screening outcome. The chat is done. |
 | `handoff` | Show the handoff message and urgency. The chat is done. |
 | `error` | Show the error message and decide whether to retry. |
+
+For `ask` actions, use `nextAction.question.text` as the prompt to speak or render. `helperText` and `options` are optional because some questions are free-text prompts and some are fixed-choice prompts. The intake review checkpoint uses `question.id = "pre_routing.intake_review"` or `"pre_routing.intake_review_repair"` and includes `question.reviewSummary.parts`, which is a structured list of the facts and concerns being confirmed. Older mappers may also see `question.questionText`, `question.suggestedText`, `helperText: null`, and `options: []` on these intake review questions; those fields are compatibility aliases around the canonical `question.text` and `question.reviewSummary` data.
 
 ## Configuration
 
