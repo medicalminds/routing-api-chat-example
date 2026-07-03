@@ -133,7 +133,45 @@ The response body contains the selected public tree:
     "schemaVersion": "symptomscreen-decision-tree.v1",
     "targetSystem": "symptomscreen",
     "targets": [],
-    "nodes": []
+    "initialCursor": {
+      "nodePath": [],
+      "questionIndex": 0,
+      "questionId": 501
+    },
+    "nodes": [
+      {
+        "type": "question",
+        "source": "main_screening",
+        "questions": [
+          {
+            "id": 501,
+            "text": "Do they have trouble breathing?"
+          }
+        ]
+      },
+      {
+        "type": "outcome",
+        "outcome": {
+          "id": 1,
+          "acuity": 1,
+          "name": "Go now",
+          "text": "Go now"
+        }
+      },
+      null,
+      null,
+      {
+        "type": "outcome",
+        "outcome": {
+          "id": 7,
+          "acuity": 7,
+          "name": "Home care",
+          "text": "Home care"
+        }
+      },
+      null,
+      null
+    ]
   }
 }
 ```
@@ -199,9 +237,13 @@ For single-select questions, you can usually type the option number, the option 
 
 ## Decision Tree Helper
 
-The file [src/decision-tree.js](./src/decision-tree.js) is deliberately standalone. It has no dependency on the CLI, no dependency on the HTTP client, and no dependency on a framework. If your app is plain JavaScript, you can copy that file into your project, or import it from this example package as `routing-api-chat-example/decision-tree`, and pass it the `decisionTree` object returned by `responseOptions.includeDecisionTree` or `POST /routing/decision-tree`.
+The file [src/decision-tree.js](./src/decision-tree.js) is deliberately standalone. It has no dependency on the CLI, no dependency on the HTTP client, and no dependency on a framework. If your app is plain JavaScript, you can copy that file into your project, or import it from this example package as `routing-api-chat-example/decision-tree`, and pass it the `decisionTree` object returned after requesting `responseOptions.includeDecisionTree` or calling `POST /routing/decision-tree`.
 
-The helper deserializes the public pre-order `nodes` array with `null` missing-child sentinels, creates a cursor over the tree, and applies the SymptomScreen safety rule. It accepts `yes`, `no`, `maybe`, `unsure`, and `unclear`, normalizing casing and surrounding whitespace. `yes`, `maybe`, `unsure`, and `unclear` go to the safety-positive left branch. A clean `no` advances to the next question in the same question node when one exists. Only a clean `no` to the last question in that node goes to the no/right branch.
+The helper deserializes the public pre-order `nodes` array with `null` missing-child sentinels, starts at `decisionTree.initialCursor` when the API includes one, creates a cursor over the tree, and applies the SymptomScreen safety rule. SymptomScreen guide questions expect a clean yes or no. The helper accepts `yes`, `no`, `maybe`, `unsure`, and `unclear`, normalizing casing and surrounding whitespace. `yes`, `maybe`, `unsure`, and `unclear` go to the safety-positive left branch. A clean `no` advances to the next question in the same question node when one exists. Only a clean `no` to the last question in that node goes to the no/right branch.
+
+Keep using `nextAction.question.text` as the prompt you show or speak to the caller. The tree is for local traversal state and may start after the root when the API has already skipped or auto-answered earlier screening questions.
+
+The helper models local branch safety only. Server-authoritative traversal through `POST /routing/turns` may still return another `ask` action before advancing, such as when the caller answer is `unclear` and the API chooses to re-ask once before taking the safety-positive branch.
 
 ```js
 import { createDecisionTreeCursor } from './src/decision-tree.js';

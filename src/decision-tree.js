@@ -122,10 +122,53 @@ const valueForCursor = (node, questionIndex) => {
   };
 };
 
+const nodeAtPath = (root, path) =>
+  path.reduce((node, branch) => {
+    if (!node) return null;
+    return branch === 'left' ? node.left : node.right;
+  }, root);
+
+const isInitialCursorPath = (value) =>
+  Array.isArray(value) &&
+  value.every((branch) => branch === 'left' || branch === 'right');
+
+const initialCursorPosition = (decisionTree, root) => {
+  const initialCursor = decisionTree.initialCursor;
+  if (!initialCursor) return { node: root, questionIndex: 0 };
+
+  if (
+    !isInitialCursorPath(initialCursor.nodePath) ||
+    !Number.isInteger(initialCursor.questionIndex) ||
+    initialCursor.questionIndex < 0 ||
+    !Number.isInteger(initialCursor.questionId)
+  ) {
+    throw new DecisionTreeTraversalError(
+      'Decision tree initial cursor is malformed.'
+    );
+  }
+
+  const node = nodeAtPath(root, initialCursor.nodePath);
+  if (!node || !isDecisionTreeQuestionNode(node.value)) {
+    throw new DecisionTreeTraversalError(
+      'Decision tree initial cursor does not point to a question node.'
+    );
+  }
+
+  const question = node.value.questions[initialCursor.questionIndex];
+  if (!question || question.id !== initialCursor.questionId) {
+    throw new DecisionTreeTraversalError(
+      'Decision tree initial cursor does not match a question in the tree.'
+    );
+  }
+
+  return { node, questionIndex: initialCursor.questionIndex };
+};
+
 export const createDecisionTreeCursor = (decisionTree) => {
   const root = deserializeDecisionTree(decisionTree);
-  let current = root;
-  let questionIndex = 0;
+  const initialPosition = initialCursorPosition(decisionTree, root);
+  let current = initialPosition.node;
+  let questionIndex = initialPosition.questionIndex;
   const steps = [];
 
   return {
@@ -181,8 +224,8 @@ export const createDecisionTreeCursor = (decisionTree) => {
       return valueForCursor(current, questionIndex);
     },
     reset() {
-      current = root;
-      questionIndex = 0;
+      current = initialPosition.node;
+      questionIndex = initialPosition.questionIndex;
       steps.splice(0, steps.length);
       return valueForCursor(current, questionIndex);
     },

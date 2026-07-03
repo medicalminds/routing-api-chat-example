@@ -96,6 +96,70 @@ const groupedQuestionDecisionTree = {
   ]
 };
 
+const nestedInitialCursorDecisionTree = {
+  ...decisionTree,
+  initialCursor: {
+    nodePath: ['right'],
+    questionIndex: 0,
+    questionId: 601
+  },
+  nodes: [
+    {
+      type: 'question',
+      source: 'main_screening',
+      questions: [
+        {
+          id: 501,
+          text: 'Auto-answered root question'
+        }
+      ]
+    },
+    {
+      type: 'outcome',
+      outcome: {
+        id: 1,
+        acuity: 1,
+        name: 'Go now',
+        text: 'Go now'
+      }
+    },
+    null,
+    null,
+    {
+      type: 'question',
+      source: 'main_screening',
+      questions: [
+        {
+          id: 601,
+          text: 'Nested current question'
+        }
+      ]
+    },
+    {
+      type: 'outcome',
+      outcome: {
+        id: 2,
+        acuity: 2,
+        name: 'Call now',
+        text: 'Call now'
+      }
+    },
+    null,
+    null,
+    {
+      type: 'outcome',
+      outcome: {
+        id: 7,
+        acuity: 7,
+        name: 'Home care',
+        text: 'Home care'
+      }
+    },
+    null,
+    null
+  ]
+};
+
 test('deserializes a public SymptomScreen decision tree', () => {
   const root = deserializeDecisionTree(decisionTree);
 
@@ -197,6 +261,75 @@ test('walks grouped questions before taking the no branch', () => {
         branch: 'left'
       }
     ]
+  );
+});
+
+test('starts from the server-provided initial cursor when present', () => {
+  const cursor = createDecisionTreeCursor({
+    ...groupedQuestionDecisionTree,
+    initialCursor: {
+      nodePath: [],
+      questionIndex: 1,
+      questionId: 502
+    }
+  });
+
+  assert.equal(cursor.current().questions[0].id, 502);
+  assert.equal(cursor.currentQuestionIndex(), 1);
+  assert.equal(cursor.answer('yes').outcome.name, 'Go now');
+
+  assert.equal(cursor.reset().questions[0].id, 502);
+  assert.equal(cursor.answer('no').outcome.name, 'Home care');
+});
+
+test('starts from a nested server-provided initial cursor', () => {
+  const cursor = createDecisionTreeCursor(nestedInitialCursorDecisionTree);
+
+  assert.equal(cursor.current().questions[0].id, 601);
+  assert.equal(cursor.answer('yes').outcome.name, 'Call now');
+
+  assert.equal(cursor.reset().questions[0].id, 601);
+  assert.equal(cursor.answer('no').outcome.name, 'Home care');
+});
+
+test('rejects invalid initial cursors', () => {
+  assert.throws(
+    () =>
+      createDecisionTreeCursor({
+        ...groupedQuestionDecisionTree,
+        initialCursor: {
+          nodePath: 'left',
+          questionIndex: 0,
+          questionId: 501
+        }
+      }),
+    /initial cursor is malformed/
+  );
+
+  assert.throws(
+    () =>
+      createDecisionTreeCursor({
+        ...groupedQuestionDecisionTree,
+        initialCursor: {
+          nodePath: ['left'],
+          questionIndex: 0,
+          questionId: 501
+        }
+      }),
+    /initial cursor does not point to a question node/
+  );
+
+  assert.throws(
+    () =>
+      createDecisionTreeCursor({
+        ...groupedQuestionDecisionTree,
+        initialCursor: {
+          nodePath: [],
+          questionIndex: 1,
+          questionId: 501
+        }
+      }),
+    /initial cursor does not match a question/
   );
 });
 
