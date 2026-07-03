@@ -99,7 +99,8 @@ Local decision-tree helper:
   :tree unsure
   :tree unclear
 
-These :tree commands only move the local helper cursor. They do not send a Routing API turn.
+These :tree commands are local exploration only. They do not send a Routing API turn,
+and the helper resynchronizes from successful SymptomScreen API answers.
 `;
 
 const setupFields = [
@@ -185,6 +186,7 @@ class RoutingChatCli {
     this.client = null;
     this.decisionTree = null;
     this.decisionTreeCursor = null;
+    this.decisionTreeScreeningAnswers = [];
     this.history = [];
     this.lastConversationExchange = null;
     this.sessionToken = null;
@@ -230,6 +232,7 @@ class RoutingChatCli {
       }
 
       this.record('Send turn', request, response);
+      this.advanceDecisionTreeFromRequest(request);
       await this.captureDecisionTree(response);
       this.renderResponse(response);
     }
@@ -314,15 +317,37 @@ class RoutingChatCli {
 
   loadDecisionTree(decisionTree) {
     this.decisionTree = decisionTree;
-    this.decisionTreeCursor = createDecisionTreeCursor(decisionTree);
+    this.replayDecisionTreeScreeningAnswers();
 
     printSection('Decision tree helper');
     console.log(
       `Loaded ${decisionTree.targets?.map((target) => target.title).join(', ') || 'selected SymptomScreen tree'}.`
     );
     console.log(
-      'Use :tree to inspect the local helper, or :tree yes/no/maybe/unsure/unclear to walk it locally without sending an API turn.'
+      'Use :tree to inspect the local helper. Normal SymptomScreen API answers keep it in sync after each successful turn.'
     );
+  }
+
+  advanceDecisionTreeFromRequest(request) {
+    if (!request?.screeningAnswer) return;
+
+    this.decisionTreeScreeningAnswers.push(request.screeningAnswer.answer);
+    if (!this.decisionTree) return;
+
+    this.replayDecisionTreeScreeningAnswers();
+    this.renderDecisionTreeCursor({
+      intro: 'Synchronized from successful API screening answer.'
+    });
+  }
+
+  replayDecisionTreeScreeningAnswers() {
+    if (!this.decisionTree) return;
+
+    const cursor = createDecisionTreeCursor(this.decisionTree);
+    for (const answer of this.decisionTreeScreeningAnswers) {
+      cursor.answer(answer);
+    }
+    this.decisionTreeCursor = cursor;
   }
 
   renderResponse(response) {
@@ -849,8 +874,17 @@ class RoutingChatCli {
       this.decisionTreeCursor.answer(answer);
     }
 
+    this.renderDecisionTreeCursor({
+      intro: rawAnswer
+        ? 'Preview after a local helper answer. No API turn was sent.'
+        : undefined
+    });
+  }
+
+  renderDecisionTreeCursor({ intro } = {}) {
     const value = this.decisionTreeCursor.current();
     printSection('Decision tree helper');
+    if (intro) console.log(intro);
     if (isDecisionTreeQuestionNode(value)) {
       console.log('Current question node');
       for (const question of value.questions) {
@@ -860,14 +894,14 @@ class RoutingChatCli {
         'yes, maybe, unsure, and unclear take the safety-positive left branch. no advances through grouped questions first, then takes the right branch.'
       );
       console.log(
-        'This is local helper state only; answer the patient input prompt separately to continue the API session.'
+        'Answer the patient input prompt to continue the API session. Successful SymptomScreen answers keep this helper state in sync.'
       );
     } else if (isDecisionTreeOutcomeNode(value)) {
       console.log('Current outcome node');
       printField('Outcome', value.outcome.text);
       printField('Priority', value.outcome.acuity);
       console.log(
-        'This is local helper state only; answer the patient input prompt separately to continue the API session.'
+        'Answer the patient input prompt to continue the API session. Successful SymptomScreen answers keep this helper state in sync.'
       );
     } else {
       console.log('The local traversal reached an empty branch.');

@@ -225,9 +225,9 @@ Useful commands:
 | `:curl`            | A runnable curl command for the last request. It includes the current key or session token. |
 | `:prompt`          | The active BYO model prompt.                                                                |
 | `:schema`          | The active BYO response schema.                                                             |
-| `:tree`            | Shows the local decision-tree helper state after the tree is loaded.                        |
-| `:tree no`         | Walks the local helper through a clean-no answer without sending an API turn.               |
-| `:tree maybe`      | Walks the local helper down the safety-positive branch without sending an API turn.         |
+| `:tree`            | Shows the synchronized local decision-tree helper state after the tree is loaded.           |
+| `:tree no`         | Previews a clean-no branch locally without sending an API turn.                             |
+| `:tree maybe`      | Previews the safety-positive branch locally without sending an API turn.                    |
 | `:option 1`        | Sends the first listed option directly.                                                     |
 | `:number 3`        | Sends a numeric answer directly.                                                            |
 | `:date 2026-05-20` | Sends a date answer directly.                                                               |
@@ -237,7 +237,7 @@ For single-select questions, you can usually type the option number, the option 
 
 ## Decision Tree Helper
 
-The file [src/decision-tree.js](./src/decision-tree.js) is deliberately standalone. It has no dependency on the CLI, no dependency on the HTTP client, and no dependency on a framework. If your app is plain JavaScript, you can copy that file into your project, or import it from this example package as `routing-api-chat-example/decision-tree`, and pass it the `decisionTree` object returned after requesting `responseOptions.includeDecisionTree` or calling `POST /routing/decision-tree`.
+The file [src/decision-tree.js](./src/decision-tree.js) is deliberately standalone. It has no dependency on the CLI, no dependency on the HTTP client, and no dependency on a framework. If your app is plain JavaScript, copy that file into your project and pass it the `decisionTree` object returned after requesting `responseOptions.includeDecisionTree` or calling `POST /routing/decision-tree`. This example package is private, but it also exposes `routing-api-chat-example/decision-tree` so workspace consumers can import the same standalone helper without reaching into the `src` directory.
 
 The helper deserializes the public pre-order `nodes` array with `null` missing-child sentinels, starts at `decisionTree.initialCursor` when the API includes one, creates a cursor over the tree, and applies the SymptomScreen safety rule. SymptomScreen guide questions expect a clean yes or no. The helper accepts `yes`, `no`, `maybe`, `unsure`, and `unclear`, normalizing casing and surrounding whitespace. `yes`, `maybe`, `unsure`, and `unclear` go to the safety-positive left branch. A clean `no` advances to the next question in the same question node when one exists. Only a clean `no` to the last question in that node goes to the no/right branch.
 

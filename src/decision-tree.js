@@ -53,6 +53,40 @@ export const decisionTreeBranchForAnswer = (answer) => {
   return normalized === 'no' ? 'right' : 'left';
 };
 
+const validateDecisionTreeEnvelope = (decisionTree) => {
+  if (!decisionTree || typeof decisionTree !== 'object') {
+    throw new DecisionTreeTraversalError(
+      'Decision tree payload must be an object.'
+    );
+  }
+  if (decisionTree.schemaVersion !== 'symptomscreen-decision-tree.v1') {
+    throw new DecisionTreeTraversalError(
+      'Decision tree payload has an unsupported schemaVersion.'
+    );
+  }
+  if (decisionTree.targetSystem !== 'symptomscreen') {
+    throw new DecisionTreeTraversalError(
+      'Decision tree payload must target SymptomScreen.'
+    );
+  }
+};
+
+const cloneDecisionTreeValue = (value) => {
+  if (isDecisionTreeQuestionNode(value)) {
+    return {
+      ...value,
+      questions: value.questions.map((question) => ({ ...question }))
+    };
+  }
+  if (isDecisionTreeOutcomeNode(value)) {
+    return {
+      ...value,
+      outcome: { ...value.outcome }
+    };
+  }
+  return value;
+};
+
 const parseDecisionTreeNode = (nodes, index) => {
   if (index >= nodes.length) {
     throw new DecisionTreeTraversalError(
@@ -92,6 +126,8 @@ const parseDecisionTreeNode = (nodes, index) => {
 };
 
 export const deserializeDecisionTree = (decisionTree) => {
+  validateDecisionTreeEnvelope(decisionTree);
+
   const nodes = decisionTree?.nodes;
   if (!Array.isArray(nodes)) {
     throw new DecisionTreeTraversalError(
@@ -114,11 +150,13 @@ export const deserializeDecisionTree = (decisionTree) => {
 
 const valueForCursor = (node, questionIndex) => {
   if (!node) return null;
-  if (!isDecisionTreeQuestionNode(node.value)) return node.value;
+  if (!isDecisionTreeQuestionNode(node.value)) {
+    return cloneDecisionTreeValue(node.value);
+  }
 
   return {
     ...node.value,
-    questions: [node.value.questions[questionIndex]]
+    questions: [{ ...node.value.questions[questionIndex] }]
   };
 };
 

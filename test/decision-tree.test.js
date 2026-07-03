@@ -209,6 +209,39 @@ test('walks a decision tree with a cursor', () => {
   assert.equal(cursor.answer('no').outcome.name, 'Home care');
 });
 
+test('treats missing branches as completed empty traversal', () => {
+  const cursor = createDecisionTreeCursor({
+    ...decisionTree,
+    nodes: [
+      decisionTree.nodes[0],
+      null,
+      decisionTree.nodes[4],
+      null,
+      null
+    ]
+  });
+
+  assert.equal(cursor.answer('yes'), null);
+  assert.equal(cursor.current(), null);
+  assert.equal(cursor.isComplete(), true);
+});
+
+test('returns cursor values without exposing mutable traversal state', () => {
+  const cursor = createDecisionTreeCursor(decisionTree);
+  const question = cursor.current();
+  question.questions[0].text = 'Changed by a caller UI';
+
+  assert.equal(
+    cursor.current().questions[0].text,
+    'Do they have trouble breathing?'
+  );
+
+  const outcome = cursor.answer('yes');
+  outcome.outcome.text = 'Changed by a caller UI';
+
+  assert.equal(cursor.current().outcome.text, 'Go now');
+});
+
 test('walks grouped questions before taking the no branch', () => {
   const cursor = createDecisionTreeCursor(groupedQuestionDecisionTree);
 
@@ -334,6 +367,22 @@ test('rejects invalid initial cursors', () => {
 });
 
 test('rejects malformed serialized trees', () => {
+  assert.throws(
+    () =>
+      deserializeDecisionTree({
+        ...decisionTree,
+        schemaVersion: 'not-supported'
+      }),
+    /unsupported schemaVersion/
+  );
+  assert.throws(
+    () =>
+      deserializeDecisionTree({
+        ...decisionTree,
+        targetSystem: 'cleartriage'
+      }),
+    /must target SymptomScreen/
+  );
   assert.throws(
     () =>
       deserializeDecisionTree({

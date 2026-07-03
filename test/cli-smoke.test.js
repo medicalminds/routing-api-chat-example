@@ -220,8 +220,11 @@ test('CLI can load an inline decision tree while sending normal turns', async ()
   for (const text of [
     'Loaded Rash or Redness - Widespread.',
     'no advances through grouped questions first',
+    'Preview after a local helper answer. No API turn was sent.',
     'Current outcome node',
     'Outcome: Go now',
+    'Synchronized from successful API screening answer.',
+    'Outcome: Home care',
     'Screening outcome: Home care'
   ]) {
     assert.match(
@@ -299,6 +302,8 @@ test('CLI can fetch a decision tree from the dedicated endpoint', async () => {
   assert.equal(stderr.trim(), '');
   assert.match(stdout, /Loaded Rash or Redness - Widespread\./);
   assert.match(stdout, /Outcome: Go now/);
+  assert.match(stdout, /Synchronized from successful API screening answer\./);
+  assert.match(stdout, /Outcome: Home care/);
   assert.match(stdout, /Screening outcome: Home care/);
 
   const start = requests.find(
