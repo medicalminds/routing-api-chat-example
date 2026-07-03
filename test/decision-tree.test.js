@@ -178,6 +178,26 @@ test('walks grouped questions before taking the no branch', () => {
   assert.equal(cursor.answer('unsure').outcome.name, 'Go now');
   cursor.reset();
   assert.equal(cursor.answer(' Unclear ').outcome.name, 'Go now');
+
+  cursor.reset();
+  assert.equal(cursor.answer('no').questions[0].id, 502);
+  assert.equal(cursor.answer('yes').outcome.name, 'Go now');
+  assert.deepEqual(
+    cursor.path().map((step) => ({
+      questionIndex: step.questionIndex,
+      branch: step.branch
+    })),
+    [
+      {
+        questionIndex: 0,
+        branch: 'right'
+      },
+      {
+        questionIndex: 1,
+        branch: 'left'
+      }
+    ]
+  );
 });
 
 test('rejects malformed serialized trees', () => {
