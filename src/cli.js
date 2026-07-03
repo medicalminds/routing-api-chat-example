@@ -9,6 +9,12 @@ import {
   RoutingInvalidResponseError
 } from './client.js';
 import {
+  createDecisionTreeCursor,
+  isDecisionTreeAnswer,
+  isDecisionTreeOutcomeNode,
+  isDecisionTreeQuestionNode
+} from './decision-tree.js';
+import {
   DEFAULT_ROUTING_API_BASE_URL,
   ROUTING_ENV,
   buildByoLlmAdvanceRequest,
@@ -50,6 +56,8 @@ Options:
   --sex-assigned-at-birth <value>  Optional known fact: female, male, or unknown
   --relationship-to-patient <val>  Optional known fact, such as self, parent, or caregiver
   --managed-initial-text <text>    Optional first caller message for managed mode
+  --decision-tree[=inline|fetch] / --no-decision-tree
+                                   Demonstrate the selected SymptomScreen tree
   --debug / --no-debug             Request managed-interpretation debug diagnostics
 
 Environment:
@@ -62,6 +70,7 @@ Environment:
   ${ROUTING_ENV.sexAssignedAtBirth}
   ${ROUTING_ENV.relationshipToPatient}
   ${ROUTING_ENV.managedInitialText}
+  ${ROUTING_ENV.includeDecisionTree}
 `;
 
 const turnHelpText = `Commands while a session is active:
@@ -73,6 +82,8 @@ const turnHelpText = `Commands while a session is active:
   :debug      Show managed interpretation diagnostics from the last response
   :prompt     Show the active BYO model prompt, when one is available
   :schema     Show the active BYO response schema, when one is available
+  :tree       Show the local decision-tree helper state, when loaded
+  :tree-json  Show the selected decision-tree payload, when loaded
   :quit       End the CLI session
 
 Direct answer shortcuts:
@@ -80,6 +91,15 @@ Direct answer shortcuts:
   :number <value>
   :date <YYYY-MM-DD>
   :unresolved
+
+Local decision-tree helper:
+  :tree yes
+  :tree no
+  :tree maybe
+  :tree unsure
+  :tree unclear
+
+These :tree commands only move the local helper cursor. They do not send a Routing API turn.
 `;
 
 const setupFields = [
@@ -102,15 +122,19 @@ const mergeFlags = (envDefaults, cliFlags) => ({
 
 const suppliedSetupFields = (...sources) =>
   new Set(
-    setupFields.filter(field =>
-      sources.some(source => source[field] !== undefined)
+    setupFields.filter((field) =>
+      sources.some((source) => source[field] !== undefined)
     )
   );
 
-const pathForHistoryLabel = label =>
-  label === 'Start session' ? '/routing/sessions' : '/routing/turns';
+const pathForHistoryLabel = (label) =>
+  label === 'Start session'
+    ? '/routing/sessions'
+    : label === 'Fetch decision tree'
+      ? '/routing/decision-tree'
+      : '/routing/turns';
 
-const printSection = title => {
+const printSection = (title) => {
   console.log('');
   console.log(`[${title}]`);
 };
@@ -143,7 +167,7 @@ const loadDotEnvIfExists = (path = '.env') => {
   }
 };
 
-const formatClientError = error => {
+const formatClientError = (error) => {
   if (error instanceof RoutingApiError) {
     return `Routing API rejected the request with HTTP ${error.status}: ${error.message}`;
   }
@@ -158,6 +182,9 @@ class RoutingChatCli {
   constructor(rl, config) {
     this.rl = rl;
     this.config = config;
+    this.client = null;
+    this.decisionTree = null;
+    this.decisionTreeCursor = null;
     this.history = [];
     this.sessionToken = null;
   }
@@ -170,6 +197,7 @@ class RoutingChatCli {
         ? { 'x-routing-debug': 'managed-interpretation' }
         : undefined
     });
+    this.client = client;
     const startRequest = buildStartSessionInput(this.config);
 
     let response;
@@ -182,11 +210,14 @@ class RoutingChatCli {
     }
 
     this.record('Start session', startRequest, response);
+    await this.captureDecisionTree(response);
     this.renderResponse(response);
 
     while (response.nextAction.type === 'ask') {
       const action = response.nextAction;
-      const request = await this.collectTurnRequest(action);
+      const request = this.withDecisionTreeResponseOptions(
+        await this.collectTurnRequest(action)
+      );
       if (!request) return;
 
       try {
@@ -198,6 +229,7 @@ class RoutingChatCli {
       }
 
       this.record('Send turn', request, response);
+      await this.captureDecisionTree(response);
       this.renderResponse(response);
     }
   }
@@ -212,7 +244,9 @@ class RoutingChatCli {
   }
 
   record(label, request, response) {
-    this.sessionToken = response.sessionToken;
+    if (response.sessionToken) {
+      this.sessionToken = response.sessionToken;
+    }
     this.history.push(
       historyEntry({
         label,
@@ -220,6 +254,63 @@ class RoutingChatCli {
         request,
         response
       })
+    );
+  }
+
+  withDecisionTreeResponseOptions(request) {
+    if (!request || this.config.decisionTreeMode !== 'inline') return request;
+
+    return {
+      ...request,
+      responseOptions: {
+        ...request.responseOptions,
+        includeDecisionTree: true
+      }
+    };
+  }
+
+  async captureDecisionTree(response) {
+    if (!this.config.includeDecisionTree) return;
+
+    if (this.config.decisionTreeMode === 'inline' && response.decisionTree) {
+      this.loadDecisionTree(response.decisionTree);
+      return;
+    }
+
+    if (
+      !this.client ||
+      this.decisionTree ||
+      !response.sessionToken ||
+      response.nextAction?.type !== 'ask' ||
+      typeof response.nextAction.question?.id !== 'number'
+    ) {
+      return;
+    }
+
+    const request = { sessionToken: response.sessionToken };
+    try {
+      const treeResponse = await this.client.getDecisionTree(request);
+      this.record('Fetch decision tree', request, treeResponse);
+      this.loadDecisionTree(treeResponse.decisionTree);
+    } catch (error) {
+      console.log('');
+      console.log(
+        'Decision tree fetch was not available for this session. Confirm the organization key has GetDecisionTree access.'
+      );
+      console.log(formatClientError(error));
+    }
+  }
+
+  loadDecisionTree(decisionTree) {
+    this.decisionTree = decisionTree;
+    this.decisionTreeCursor = createDecisionTreeCursor(decisionTree);
+
+    printSection('Decision tree helper');
+    console.log(
+      `Loaded ${decisionTree.targets?.map((target) => target.title).join(', ') || 'selected SymptomScreen tree'}.`
+    );
+    console.log(
+      'Use :tree to inspect the local helper, or :tree yes/no/maybe/unsure/unclear to walk it locally without sending an API turn.'
     );
   }
 
@@ -289,6 +380,11 @@ class RoutingChatCli {
         'Debug diagnostics',
         `${response.debug.managedInterpretationDiagnostics.length} item(s); type :debug to inspect`
       );
+    }
+
+    if (this.decisionTree) {
+      console.log('');
+      printField('Decision tree helper', 'loaded; type :tree to inspect');
     }
   }
 
@@ -381,7 +477,11 @@ class RoutingChatCli {
       );
       if (callerText === null) return null;
 
-      const direct = this.directCommandRequest(callerText, action, sessionToken);
+      const direct = this.directCommandRequest(
+        callerText,
+        action,
+        sessionToken
+      );
       if (direct.commandHandled) {
         if (direct.request) return direct.request;
         continue;
@@ -470,7 +570,9 @@ class RoutingChatCli {
         return await this.collectByoLlmResult(action, sessionToken, value);
       }
 
-      console.log('Enter a date in YYYY-MM-DD format before sending this turn.');
+      console.log(
+        'Enter a date in YYYY-MM-DD format before sending this turn.'
+      );
       return undefined;
     }
 
@@ -527,7 +629,8 @@ class RoutingChatCli {
             sessionToken
           })
         : null;
-      if (!request) console.log('That is not a valid option for this question.');
+      if (!request)
+        console.log('That is not a valid option for this question.');
       return { commandHandled: true, ...(request ? { request } : {}) };
     }
 
@@ -698,9 +801,65 @@ class RoutingChatCli {
       }
       return 'handled';
     }
+    if (command === ':tree-json') {
+      if (!this.decisionTree) {
+        console.log('No decision tree has been loaded yet.');
+      } else {
+        printSection('Decision tree payload');
+        console.log(prettyJson(this.decisionTree));
+      }
+      return 'handled';
+    }
+    if (command === ':tree') {
+      this.handleTreeCommand(trimmed);
+      return 'handled';
+    }
 
     console.log(`Unknown command: ${command}. Type :help for options.`);
     return 'handled';
+  }
+
+  handleTreeCommand(line) {
+    if (!this.decisionTreeCursor) {
+      console.log(
+        'No decision tree has been loaded yet. Start with --decision-tree and wait until SymptomScreen screening is reached.'
+      );
+      return;
+    }
+
+    const [, rawAnswer] = line.trim().split(/\s+/, 2);
+    if (rawAnswer) {
+      const answer = rawAnswer.toLowerCase();
+      if (!isDecisionTreeAnswer(answer)) {
+        console.log('Use yes, no, maybe, unsure, or unclear after :tree.');
+        return;
+      }
+      this.decisionTreeCursor.answer(answer);
+    }
+
+    const value = this.decisionTreeCursor.current();
+    printSection('Decision tree helper');
+    if (isDecisionTreeQuestionNode(value)) {
+      console.log('Current question node');
+      for (const question of value.questions) {
+        console.log(`- ${question.text}`);
+      }
+      console.log(
+        'Only :tree no takes the no/right branch. yes, maybe, unsure, and unclear take the safety-positive left branch.'
+      );
+      console.log(
+        'This is local helper state only; answer the patient input prompt separately to continue the API session.'
+      );
+    } else if (isDecisionTreeOutcomeNode(value)) {
+      console.log('Current outcome node');
+      printField('Outcome', value.outcome.text);
+      printField('Priority', value.outcome.acuity);
+      console.log(
+        'This is local helper state only; answer the patient input prompt separately to continue the API session.'
+      );
+    } else {
+      console.log('The local traversal reached an empty branch.');
+    }
   }
 }
 
@@ -719,7 +878,7 @@ const selectValue = async ({ defaultValue, label, options, rl }) => {
     const selected =
       Number.isInteger(choice) && choice > 0 && choice <= options.length
         ? options[choice - 1]
-        : options.find(option => option.value === answer);
+        : options.find((option) => option.value === answer);
     if (selected) return selected.value;
     console.log('Choose one of the listed options.');
   }
@@ -816,6 +975,16 @@ const collectConfig = async (flags, rl, suppliedFields) => {
         ? flags.managedInitialText
         : undefined
       : undefined;
+  const decisionTreeMode =
+    flags.includeDecisionTree === true
+      ? (flags.decisionTreeMode ?? 'inline')
+      : undefined;
+
+  if (decisionTreeMode && targetSystem !== 'symptomscreen') {
+    throw new Error(
+      'The decision-tree demo is only available for SymptomScreen sessions.'
+    );
+  }
 
   return {
     baseUrl,
@@ -823,6 +992,8 @@ const collectConfig = async (flags, rl, suppliedFields) => {
       flags.debugManagedInterpretation === undefined
         ? true
         : flags.debugManagedInterpretation,
+    decisionTreeMode,
+    includeDecisionTree: Boolean(decisionTreeMode),
     interpreterMode,
     knownFacts,
     managedInitialText,

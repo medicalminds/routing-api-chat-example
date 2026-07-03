@@ -42,10 +42,10 @@ const freeTextQuestion = {
   inputKind: 'free_text'
 };
 
-const llmTask = resultField => ({
+const llmTask = (resultField) => ({
   taskId: `task.${resultField}`,
   schemaName: 'routing_initial_interpretation',
-  schemaVersion: 'routing-interpretation.v1',
+  schemaVersion: 'routing-interpretation.v3',
   resultField,
   systemPrompt: 'Return JSON only.',
   userPromptTemplate:
@@ -89,7 +89,26 @@ test('builds managed and BYO start requests', () => {
       organizationKey: 'org-key',
       targetSystem: 'symptomscreen',
       interpreterMode: 'byo',
+      includeDecisionTree: true,
       managedInitialText: 'BYO should not send this text.'
+    }),
+    {
+      organizationKey: 'org-key',
+      targetSystem: 'symptomscreen',
+      interpreterMode: 'byo',
+      responseOptions: {
+        includeDecisionTree: true
+      }
+    }
+  );
+
+  assert.deepEqual(
+    buildStartSessionInput({
+      organizationKey: 'org-key',
+      targetSystem: 'symptomscreen',
+      interpreterMode: 'byo',
+      includeDecisionTree: true,
+      decisionTreeMode: 'fetch'
     }),
     {
       organizationKey: 'org-key',
@@ -161,16 +180,26 @@ test('submits BYO model JSON under llmTask.resultField', () => {
       sessionToken: 'token',
       task: llmTask('interpretation'),
       resultJson:
-        '{"schemaVersion":"routing-interpretation.v1","concerns":[],"notes":[]}'
+        '{"schemaVersion":"routing-interpretation.v3","concerns":[],"notes":[]}'
     }),
     {
       sessionToken: 'token',
       interpretation: {
-        schemaVersion: 'routing-interpretation.v1',
+        schemaVersion: 'routing-interpretation.v3',
         concerns: [],
         notes: []
       }
     }
+  );
+
+  assert.throws(
+    () =>
+      buildByoLlmAdvanceRequest({
+        sessionToken: 'token',
+        task: llmTask('unsupportedField'),
+        resultJson: '{}'
+      }),
+    /Unsupported Routing API llmTask resultField/
   );
 });
 
@@ -196,13 +225,13 @@ test('turns direct answers into advance requests', () => {
     buildOptionAdvanceRequest({
       sessionToken: 'token',
       question: screeningQuestion,
-      optionId: 'no'
+      optionId: 'maybe'
     }),
     {
       sessionToken: 'token',
       screeningAnswer: {
         questionId: 501,
-        answer: 'no'
+        answer: 'maybe'
       }
     }
   );
@@ -210,7 +239,11 @@ test('turns direct answers into advance requests', () => {
   assert.deepEqual(
     buildNumberAdvanceRequest({
       sessionToken: 'token',
-      question: { id: 'question.duration', text: 'How many?', inputKind: 'number' },
+      question: {
+        id: 'question.duration',
+        text: 'How many?',
+        inputKind: 'number'
+      },
       value: '3'
     }),
     {
@@ -253,12 +286,15 @@ test('turns direct answers into advance requests', () => {
     }
   );
 
-  assert.deepEqual(buildMessageAdvanceRequest({ sessionToken: 'token', text: ' Hi ' }), {
-    sessionToken: 'token',
-    message: {
-      text: 'Hi'
+  assert.deepEqual(
+    buildMessageAdvanceRequest({ sessionToken: 'token', text: ' Hi ' }),
+    {
+      sessionToken: 'token',
+      message: {
+        text: 'Hi'
+      }
     }
-  });
+  );
 });
 
 test('parses flags and environment defaults for setup', () => {
@@ -273,6 +309,7 @@ test('parses flags and environment defaults for setup', () => {
       'female',
       '--relationship',
       'self',
+      '--decision-tree=fetch',
       '--no-debug'
     ]),
     {
@@ -281,14 +318,27 @@ test('parses flags and environment defaults for setup', () => {
       targetSystem: 'symptomscreen',
       sexAssignedAtBirth: 'female',
       relationshipToPatient: 'self',
+      includeDecisionTree: true,
+      decisionTreeMode: 'fetch',
       debugManagedInterpretation: false
     }
   );
+
+  assert.deepEqual(parseRoutingChatCliArgs(['--decision-tree', 'inline']), {
+    includeDecisionTree: true,
+    decisionTreeMode: 'inline'
+  });
+
+  assert.deepEqual(parseRoutingChatCliArgs(['--no-decision-tree']), {
+    includeDecisionTree: false,
+    decisionTreeMode: null
+  });
 
   assert.deepEqual(
     routingChatDefaultsFromEnv({
       ROUTING_API_BASE_URL: 'https://routing.example.com/api',
       ROUTING_API_KEY: 'env-key',
+      ROUTING_INCLUDE_DECISION_TREE: 'fetch',
       ROUTING_INTERPRETER_MODE: 'MANAGED',
       ROUTING_TARGET_SYSTEM: 'cleartriage'
     }),
@@ -301,6 +351,8 @@ test('parses flags and environment defaults for setup', () => {
       sexAssignedAtBirth: undefined,
       relationshipToPatient: undefined,
       managedInitialText: undefined,
+      includeDecisionTree: true,
+      decisionTreeMode: 'fetch',
       debugManagedInterpretation: true
     }
   );
@@ -320,4 +372,3 @@ test('redacts credentials in history output', () => {
     }
   );
 });
-

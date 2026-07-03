@@ -57,6 +57,8 @@ In `byo` mode, short for "bring your own model," patient or caregiver text stays
 
 That means BYO mode does not require your app to invent API request shapes. The API tells you what structured answer it needs for the current turn.
 
+The example can also demonstrate the optional SymptomScreen decision-tree payload. Start it with `--decision-tree` or `--decision-tree=inline` to request the tree in normal session and turn responses. Start it with `--decision-tree=fetch` to demonstrate the dedicated `POST /routing/decision-tree` endpoint instead. Your organization key must have `GetDecisionTree` access. Once the session reaches SymptomScreen screening, the CLI loads the selected tree and lets you try local traversal with commands such as `:tree`, `:tree no`, or `:tree unsure`.
+
 ## API Shape
 
 Start a session:
@@ -90,7 +92,7 @@ If your app already has patient facts before the chat begins, you can send them 
 }
 ```
 
-New integrations should prefer sending setup facts on `POST /routing/sessions`. Current Routing API deployments also accept compatible `knownFacts` on `POST /routing/turns` for older stateless data-action mappings that carry flattened facts on every turn. The API merges those facts only when they fill a missing value or repeat the value already stored in the session token. If a turn tries to change an established date of birth, age, sex assigned at birth, or relationship, the API rejects that turn instead of silently changing the patient context.
+Send setup facts only on `POST /routing/sessions`. Do not send `knownFacts` on follow-up turns; the API rejects follow-up setup facts so the patient context cannot silently change after the session starts. When the caller corrects a collected setup fact or symptom summary, use the intake-review correction flow returned by the API.
 
 Continue a session:
 
@@ -109,15 +111,44 @@ Every turn includes the latest `sessionToken`:
 }
 ```
 
-The response always includes a new `sessionToken` and a `nextAction`. The action type tells your client what to do next:
+Fetch the selected SymptomScreen decision tree after screening is reached:
 
-| Action | What your app should do |
-| --- | --- |
-| `ask` | Show the question and collect the next answer. |
-| `say` | Show the message. |
+```http
+POST /routing/decision-tree
+```
+
+The request body is just the current session token:
+
+```json
+{
+  "sessionToken": "opaque-token-from-the-previous-response"
+}
+```
+
+The response body contains the selected public tree:
+
+```json
+{
+  "decisionTree": {
+    "schemaVersion": "symptomscreen-decision-tree.v1",
+    "targetSystem": "symptomscreen",
+    "targets": [],
+    "nodes": []
+  }
+}
+```
+
+This endpoint requires `GetDecisionTree` access on the organization key that started the session. You can also ask for the tree inline by sending `responseOptions.includeDecisionTree: true` on `POST /routing/sessions` and follow-up `POST /routing/turns`. In this CLI, pass `--decision-tree` or `--decision-tree=inline` for inline mode. Pass `--decision-tree=fetch` when you want the example to call the dedicated endpoint instead.
+
+Session responses from `POST /routing/sessions` and `POST /routing/turns` include a new `sessionToken` and a `nextAction`. The action type tells your client what to do next:
+
+| Action     | What your app should do                                 |
+| ---------- | ------------------------------------------------------- |
+| `ask`      | Show the question and collect the next answer.          |
+| `say`      | Show the message.                                       |
 | `resolved` | Show the target or screening outcome. The chat is done. |
-| `handoff` | Show the handoff message and urgency. The chat is done. |
-| `error` | Show the error message and decide whether to retry. |
+| `handoff`  | Show the handoff message and urgency. The chat is done. |
+| `error`    | Show the error message and decide whether to retry.     |
 
 For `ask` actions, use `nextAction.question.text` as the prompt to speak or render. `helperText` and `options` are optional because some questions are free-text prompts and some are fixed-choice prompts. The intake review checkpoint uses `question.id = "pre_routing.intake_review"` or `"pre_routing.intake_review_repair"` and includes `question.reviewSummary.parts`, which is a structured list of the facts and concerns being confirmed. Older mappers may also see `question.questionText`, `question.suggestedText`, `helperText: null`, and `options: []` on these intake review questions; those fields are compatibility aliases around the canonical `question.text` and `question.reviewSummary` data.
 
@@ -125,16 +156,17 @@ For `ask` actions, use `nextAction.question.text` as the prompt to speak or rend
 
 The CLI understands these environment variables:
 
-| Variable | Purpose |
-| --- | --- |
-| `ROUTING_API_BASE_URL` | Base URL for the API, usually ending in `/api`. |
-| `ROUTING_API_KEY` | API key used as `organizationKey` when starting a session. |
-| `ROUTING_TARGET_SYSTEM` | `symptomscreen` or `cleartriage`. |
-| `ROUTING_INTERPRETER_MODE` | `managed` or `byo`. |
-| `ROUTING_DATE_OF_BIRTH` | Optional known fact, `YYYY-MM-DD` or `MM/DD/YYYY`. |
-| `ROUTING_SEX_ASSIGNED_AT_BIRTH` | Optional known fact: `female`, `male`, or `unknown`. |
-| `ROUTING_RELATIONSHIP_TO_PATIENT` | Optional known fact, such as `self`, `parent`, or `caregiver`. |
-| `ROUTING_MANAGED_INITIAL_TEXT` | Optional first message for managed mode. |
+| Variable                          | Purpose                                                                             |
+| --------------------------------- | ----------------------------------------------------------------------------------- |
+| `ROUTING_API_BASE_URL`            | Base URL for the API, usually ending in `/api`.                                     |
+| `ROUTING_API_KEY`                 | API key used as `organizationKey` when starting a session.                          |
+| `ROUTING_TARGET_SYSTEM`           | `symptomscreen` or `cleartriage`.                                                   |
+| `ROUTING_INTERPRETER_MODE`        | `managed` or `byo`.                                                                 |
+| `ROUTING_INCLUDE_DECISION_TREE`   | Optional. Use `true`, `inline`, or `fetch` to demonstrate the selected SymptomScreen tree. |
+| `ROUTING_DATE_OF_BIRTH`           | Optional known fact, `YYYY-MM-DD` or `MM/DD/YYYY`.                                  |
+| `ROUTING_SEX_ASSIGNED_AT_BIRTH`   | Optional known fact: `female`, `male`, or `unknown`.                                |
+| `ROUTING_RELATIONSHIP_TO_PATIENT` | Optional known fact, such as `self`, `parent`, or `caregiver`.                      |
+| `ROUTING_MANAGED_INITIAL_TEXT`    | Optional first message for managed mode.                                            |
 
 The older name `ROUTING_ORGANIZATION_KEY` also works if your environment already uses that term.
 
@@ -146,31 +178,58 @@ Type `:help` while the CLI is waiting for input to see available commands.
 
 Useful commands:
 
-| Command | What it shows or sends |
-| --- | --- |
-| `:history` | Redacted request and response history. |
-| `:request` | Last request with credentials redacted. |
-| `:response` | Last response with credentials redacted. |
-| `:curl` | A runnable curl command for the last request. It includes the current key or session token. |
-| `:prompt` | The active BYO model prompt. |
-| `:schema` | The active BYO response schema. |
-| `:option 1` | Sends the first listed option directly. |
-| `:number 3` | Sends a numeric answer directly. |
-| `:date 2026-05-20` | Sends a date answer directly. |
-| `:unresolved` | Sends an unresolved structured answer for the current question. |
+| Command            | What it shows or sends                                                                      |
+| ------------------ | ------------------------------------------------------------------------------------------- |
+| `:history`         | Redacted request and response history.                                                      |
+| `:request`         | Last request with credentials redacted.                                                     |
+| `:response`        | Last response with credentials redacted.                                                    |
+| `:curl`            | A runnable curl command for the last request. It includes the current key or session token. |
+| `:prompt`          | The active BYO model prompt.                                                                |
+| `:schema`          | The active BYO response schema.                                                             |
+| `:tree`            | Shows the local decision-tree helper state after the tree is loaded.                        |
+| `:tree no`         | Walks the local helper down the clean-no branch without sending an API turn.                |
+| `:tree maybe`      | Walks the local helper down the safety-positive branch without sending an API turn.         |
+| `:option 1`        | Sends the first listed option directly.                                                     |
+| `:number 3`        | Sends a numeric answer directly.                                                            |
+| `:date 2026-05-20` | Sends a date answer directly.                                                               |
+| `:unresolved`      | Sends an unresolved structured answer for the current question.                             |
 
 For single-select questions, you can usually type the option number, the option id, or the visible label.
+
+## Decision Tree Helper
+
+The file [src/decision-tree.js](./src/decision-tree.js) is deliberately standalone. It has no dependency on the CLI, no dependency on the HTTP client, and no dependency on a framework. If your app is plain JavaScript, you can copy that file into your project and pass it the `decisionTree` object returned by `responseOptions.includeDecisionTree` or `POST /routing/decision-tree`.
+
+The helper deserializes the public pre-order `nodes` array with `null` missing-child sentinels, creates a cursor over the tree, and applies the SymptomScreen safety rule. Only a clean `no` goes to the no/right branch. `yes`, `maybe`, `unsure`, and `unclear` all go to the safety-positive left branch.
+
+```js
+import { createDecisionTreeCursor } from './src/decision-tree.js';
+
+const cursor = createDecisionTreeCursor(decisionTree);
+
+while (cursor.current()?.type === 'question') {
+  const answer = await collectAnswerFromYourUi(cursor.current().questions);
+  cursor.answer(answer);
+}
+
+console.log(cursor.current().outcome.text);
+```
+
+That local traversal is optional and independent from the active Routing API session. The safest and simplest integration remains server-authoritative traversal through `POST /routing/turns`; the helper is for consumers that specifically need the full selected tree in their own app.
 
 ## Reading The Code
 
 The project is intentionally small:
 
-| File | Why it exists |
-| --- | --- |
-| `src/client.js` | Tiny HTTP client for `POST /routing/sessions` and `POST /routing/turns`. |
-| `src/flow.js` | Helpers for flags, known facts, BYO prompts, structured answers, history, and curl output. |
-| `src/cli.js` | The interactive command-line app. |
-| `test/flow.test.js` | Focused tests for the reusable flow helpers. |
+| File                         | Why it exists                                                                                            |
+| ---------------------------- | -------------------------------------------------------------------------------------------------------- |
+| `src/client.js`              | Tiny HTTP client for `POST /routing/sessions`, `POST /routing/turns`, and `POST /routing/decision-tree`. |
+| `src/decision-tree.js`       | Copyable standalone helper for traversing a selected SymptomScreen decision tree.                        |
+| `src/flow.js`                | Helpers for flags, known facts, BYO prompts, structured answers, history, and curl output.               |
+| `src/cli.js`                 | The interactive command-line app.                                                                        |
+| `test/flow.test.js`          | Focused tests for the reusable flow helpers.                                                             |
+| `test/decision-tree.test.js` | Focused tests for the copyable decision-tree helper.                                                     |
+| `test/cli-smoke.test.js`     | End-to-end CLI smoke tests against a local mock Routing API.                                             |
 
 If you are building a real application, `src/flow.js` is the best place to start. It shows the data you send for each kind of turn without mixing that logic into terminal input handling.
 
@@ -203,7 +262,7 @@ For later yes/no screening questions, you can choose the direct option number in
 npm test
 ```
 
-The tests do not call the live Routing API. They verify the reusable request-building and BYO helper behavior.
+The tests do not call the live Routing API. They verify the reusable request-building helpers, the decision-tree helper, and a CLI smoke flow against a local mock HTTP server.
 
 ## Troubleshooting
 

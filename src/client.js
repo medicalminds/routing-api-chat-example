@@ -18,7 +18,7 @@ export class RoutingInvalidResponseError extends Error {
   }
 }
 
-const apiErrorMessage = apiError => {
+const apiErrorMessage = (apiError) => {
   if (apiError && typeof apiError === 'object') {
     if (typeof apiError.message === 'string') return apiError.message;
     if (typeof apiError.error === 'string') return apiError.error;
@@ -27,12 +27,14 @@ const apiErrorMessage = apiError => {
 };
 
 export const joinUrl = (baseUrl, path) => {
-  const normalizedBase = (baseUrl || DEFAULT_BASE_URL).trim().replace(/\/+$/, '');
+  const normalizedBase = (baseUrl || DEFAULT_BASE_URL)
+    .trim()
+    .replace(/\/+$/, '');
   const normalizedPath = path.replace(/^\/+/, '');
   return `${normalizedBase}/${normalizedPath}`;
 };
 
-const readJsonResponse = async response => {
+const readJsonResponse = async (response) => {
   const text = await response.text();
   if (!text.trim()) {
     throw new RoutingInvalidResponseError(
@@ -54,7 +56,7 @@ const readJsonResponse = async response => {
 
 // Treat error-shaped JSON as a Routing API error even if the HTTP status is
 // unexpectedly successful, so CLI callers get the same error path either way.
-const looksLikeApiError = value =>
+const looksLikeApiError = (value) =>
   value &&
   typeof value === 'object' &&
   (typeof value.message === 'string' || typeof value.error === 'string');
@@ -95,7 +97,40 @@ const validateSessionResponse = (value, status) => {
   return value;
 };
 
-const postJson = async ({ baseUrl, headers = {}, fetchImpl = fetch }, path, body) => {
+const validateDecisionTreeResponse = (value, status) => {
+  if (!value || typeof value !== 'object') {
+    throw new RoutingInvalidResponseError(
+      'The Routing API decision tree response was not a JSON object.',
+      status,
+      value
+    );
+  }
+
+  if (!value.decisionTree || typeof value.decisionTree !== 'object') {
+    throw new RoutingInvalidResponseError(
+      'The Routing API decision tree response did not include a decisionTree object.',
+      status,
+      value
+    );
+  }
+
+  if (!Array.isArray(value.decisionTree.nodes)) {
+    throw new RoutingInvalidResponseError(
+      'The Routing API decision tree response did not include a nodes array.',
+      status,
+      value
+    );
+  }
+
+  return value;
+};
+
+const postJson = async (
+  { baseUrl, headers = {}, fetchImpl = fetch },
+  path,
+  body,
+  validateResponse
+) => {
   const response = await fetchImpl(joinUrl(baseUrl, path), {
     method: 'POST',
     headers: {
@@ -111,10 +146,19 @@ const postJson = async ({ baseUrl, headers = {}, fetchImpl = fetch }, path, body
     throw new RoutingApiError(response.status, json);
   }
 
-  return validateSessionResponse(json, response.status);
+  return validateResponse(json, response.status);
 };
 
 export const createRoutingApiClient = (options = {}) => ({
-  startSession: body => postJson(options, '/routing/sessions', body),
-  advanceSession: body => postJson(options, '/routing/turns', body)
+  startSession: (body) =>
+    postJson(options, '/routing/sessions', body, validateSessionResponse),
+  advanceSession: (body) =>
+    postJson(options, '/routing/turns', body, validateSessionResponse),
+  getDecisionTree: (body) =>
+    postJson(
+      options,
+      '/routing/decision-tree',
+      body,
+      validateDecisionTreeResponse
+    )
 });

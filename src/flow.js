@@ -5,6 +5,7 @@ export const ROUTING_ENV = {
   baseUrl: 'ROUTING_API_BASE_URL',
   dateOfBirth: 'ROUTING_DATE_OF_BIRTH',
   debugManagedInterpretation: 'ROUTING_DEBUG_MANAGED_INTERPRETATION',
+  includeDecisionTree: 'ROUTING_INCLUDE_DECISION_TREE',
   interpreterMode: 'ROUTING_INTERPRETER_MODE',
   managedInitialText: 'ROUTING_MANAGED_INITIAL_TEXT',
   organizationKey: 'ROUTING_ORGANIZATION_KEY',
@@ -15,6 +16,7 @@ export const ROUTING_ENV = {
 
 const targetSystems = ['symptomscreen', 'cleartriage'];
 const interpreterModes = ['managed', 'byo'];
+const decisionTreeModes = ['inline', 'fetch'];
 const sexAssignedAtBirthValues = ['female', 'male', 'unknown'];
 const relationshipToPatientValues = [
   'self',
@@ -35,10 +37,13 @@ const knownFlagNames = new Set([
   'byo',
   'date-of-birth',
   'debug',
+  'decision-tree',
   'help',
+  'include-decision-tree',
   'managed',
   'managed-initial-text',
   'mode',
+  'no-decision-tree',
   'no-debug',
   'organization-key',
   'org-key',
@@ -49,17 +54,17 @@ const knownFlagNames = new Set([
   'target-system'
 ]);
 
-export const prettyJson = value => JSON.stringify(value, null, 2);
+export const prettyJson = (value) => JSON.stringify(value, null, 2);
 
-export const stripJsonFence = value => {
+export const stripJsonFence = (value) => {
   const trimmed = value.trim();
   const fenceMatch = /^```(?:json)?\s*([\s\S]*?)\s*```$/i.exec(trimmed);
   return fenceMatch ? fenceMatch[1].trim() : trimmed;
 };
 
-export const parseJsonInput = value => JSON.parse(stripJsonFence(value));
+export const parseJsonInput = (value) => JSON.parse(stripJsonFence(value));
 
-const asString = value => {
+const asString = (value) => {
   const trimmed = value?.trim();
   return trimmed ? trimmed : undefined;
 };
@@ -91,7 +96,7 @@ const normalizedDateFromParts = (yearValue, monthValue, dayValue) => {
 
 export const todayIsoDate = () => new Date().toISOString().slice(0, 10);
 
-export const normalizeDateInput = value => {
+export const normalizeDateInput = (value) => {
   const trimmed = value.trim().replace(/\s+/g, ' ');
   if (!trimmed) return null;
 
@@ -112,16 +117,16 @@ const normalizeOneOf = (value, allowed) => {
   return normalized && allowed.includes(normalized) ? normalized : undefined;
 };
 
-export const normalizeTargetSystem = value =>
+export const normalizeTargetSystem = (value) =>
   normalizeOneOf(value, targetSystems);
 
-export const normalizeInterpreterMode = value =>
+export const normalizeInterpreterMode = (value) =>
   normalizeOneOf(value, interpreterModes);
 
-export const normalizeSexAssignedAtBirth = value =>
+export const normalizeSexAssignedAtBirth = (value) =>
   normalizeOneOf(value, sexAssignedAtBirthValues);
 
-export const normalizeRelationshipToPatient = value =>
+export const normalizeRelationshipToPatient = (value) =>
   normalizeOneOf(value, relationshipToPatientValues);
 
 export const knownFactsFromValues = ({
@@ -130,7 +135,9 @@ export const knownFactsFromValues = ({
   sexAssignedAtBirth
 }) => {
   const knownFacts = {};
-  const normalizedDate = dateOfBirth ? normalizeDateInput(dateOfBirth) : undefined;
+  const normalizedDate = dateOfBirth
+    ? normalizeDateInput(dateOfBirth)
+    : undefined;
   const normalizedSex = normalizeSexAssignedAtBirth(sexAssignedAtBirth);
   const normalizedRelationship = normalizeRelationshipToPatient(
     relationshipToPatient
@@ -146,16 +153,24 @@ export const knownFactsFromValues = ({
 };
 
 export const buildStartSessionInput = ({
+  decisionTreeMode,
+  includeDecisionTree,
   interpreterMode,
   knownFacts,
   managedInitialText,
   organizationKey,
   targetSystem
 }) => {
+  const includeDecisionTreeInline =
+    decisionTreeMode === 'inline' ||
+    (includeDecisionTree && decisionTreeMode === undefined);
   const base = {
     organizationKey: organizationKey.trim(),
     targetSystem,
-    ...(knownFacts ? { knownFacts } : {})
+    ...(knownFacts ? { knownFacts } : {}),
+    ...(includeDecisionTreeInline
+      ? { responseOptions: { includeDecisionTree: true } }
+      : {})
   };
 
   if (interpreterMode === 'managed') {
@@ -196,24 +211,39 @@ export const buildCompleteByoPrompt = ({ callerText, question, task }) =>
 
 // The Routing API tells BYO callers which top-level field should receive
 // the model's JSON result for the active turn.
-export const buildByoLlmAdvanceRequest = ({ resultJson, sessionToken, task }) => {
+export const buildByoLlmAdvanceRequest = ({
+  resultJson,
+  sessionToken,
+  task
+}) => {
   const parsed = parseJsonInput(resultJson);
 
+  if (task.resultField === 'interpretation') {
+    return { sessionToken, interpretation: parsed };
+  }
   if (task.resultField === 'screeningAnswer') {
     return { sessionToken, screeningAnswer: parsed };
   }
   if (task.resultField === 'structuredAnswer') {
     return { sessionToken, structuredAnswer: parsed };
   }
-  return { sessionToken, interpretation: parsed };
+
+  throw new Error(
+    `Unsupported Routing API llmTask resultField: ${task.resultField}`
+  );
 };
 
 // SymptomScreen screening questions use numeric ids; routing questions use
 // string ids and are submitted through the structured-answer shape.
-export const isScreeningQuestion = question => typeof question.id === 'number';
+export const isScreeningQuestion = (question) =>
+  typeof question.id === 'number';
 
-export const isSymptomScreeningAnswerValue = value =>
-  value === 'yes' || value === 'no' || value === 'unclear';
+export const isSymptomScreeningAnswerValue = (value) =>
+  value === 'yes' ||
+  value === 'no' ||
+  value === 'maybe' ||
+  value === 'unsure' ||
+  value === 'unclear';
 
 export const optionIdFromChoice = (question, value) => {
   const trimmed = value.trim();
@@ -229,20 +259,28 @@ export const optionIdFromChoice = (question, value) => {
   }
 
   const normalized = trimmed.toLowerCase();
+  if (
+    isScreeningQuestion(question) &&
+    isSymptomScreeningAnswerValue(normalized)
+  ) {
+    return normalized;
+  }
+
   return (
     question.options?.find(
-      option =>
+      (option) =>
         option.id.toLowerCase() === normalized ||
         option.label.toLowerCase() === normalized
     )?.id ?? null
   );
 };
 
-export const buildOptionAdvanceRequest = ({ optionId, question, sessionToken }) => {
-  if (
-    question.inputKind !== 'single_select' ||
-    !question.options?.some(option => option.id === optionId)
-  ) {
+export const buildOptionAdvanceRequest = ({
+  optionId,
+  question,
+  sessionToken
+}) => {
+  if (question.inputKind !== 'single_select') {
     return null;
   }
 
@@ -258,6 +296,10 @@ export const buildOptionAdvanceRequest = ({ optionId, question, sessionToken }) 
     };
   }
 
+  if (!question.options?.some((option) => option.id === optionId)) {
+    return null;
+  }
+
   return {
     sessionToken,
     structuredAnswer: {
@@ -268,7 +310,7 @@ export const buildOptionAdvanceRequest = ({ optionId, question, sessionToken }) 
   };
 };
 
-export const parseNumberAnswer = value => {
+export const parseNumberAnswer = (value) => {
   const trimmed = value.trim();
   if (!trimmed) return null;
 
@@ -276,12 +318,16 @@ export const parseNumberAnswer = value => {
   return Number.isFinite(parsed) ? parsed : null;
 };
 
-export const parseDateAnswer = value => {
+export const parseDateAnswer = (value) => {
   const trimmed = value.trim();
   return /^\d{4}-\d{2}-\d{2}$/.test(trimmed) ? trimmed : null;
 };
 
-export const buildNumberAdvanceRequest = ({ question, sessionToken, value }) => {
+export const buildNumberAdvanceRequest = ({
+  question,
+  sessionToken,
+  value
+}) => {
   const parsed = parseNumberAnswer(value);
   if (parsed === null) return null;
 
@@ -326,16 +372,16 @@ export const buildMessageAdvanceRequest = ({ sessionToken, text }) => {
   };
 };
 
-export const readableId = value =>
+export const readableId = (value) =>
   String(value)
     .replace(/^question\./, '')
     .replace(/_/g, ' ')
-    .replace(/\b\w/g, character => character.toUpperCase());
+    .replace(/\b\w/g, (character) => character.toUpperCase());
 
-export const targetSystemLabel = targetSystem =>
+export const targetSystemLabel = (targetSystem) =>
   targetSystem === 'symptomscreen' ? 'SymptomScreen' : 'ClearTriage';
 
-const normalizedTargetId = target => {
+const normalizedTargetId = (target) => {
   if (typeof target.id === 'number') return String(target.id);
   const numericId = Number(target.id);
   return Number.isInteger(numericId) && numericId > 0
@@ -343,11 +389,11 @@ const normalizedTargetId = target => {
     : target.id;
 };
 
-export const selectedGuideTargets = action => {
+export const selectedGuideTargets = (action) => {
   if (!('targets' in action) || !Array.isArray(action.targets)) return [];
 
   const seen = new Set();
-  return action.targets.filter(target => {
+  return action.targets.filter((target) => {
     if (target.targetSystem !== 'symptomscreen') return false;
     const key = `${target.targetSystem}:${normalizedTargetId(target)}`;
     if (seen.has(key)) return false;
@@ -356,8 +402,8 @@ export const selectedGuideTargets = action => {
   });
 };
 
-export const redactCredentials = value => {
-  if (Array.isArray(value)) return value.map(item => redactCredentials(item));
+export const redactCredentials = (value) => {
+  if (Array.isArray(value)) return value.map((item) => redactCredentials(item));
   if (!value || typeof value !== 'object') return value;
 
   return Object.fromEntries(
@@ -409,21 +455,69 @@ export const historyEntry = ({ label, path, request, response }) => ({
   timestamp: new Date().toISOString()
 });
 
-const booleanFlagValue = value => {
+const booleanFlagValue = (value) => {
   const normalized = value?.trim().toLowerCase();
   if (!normalized) return true;
   return ['1', 'true', 'yes', 'y', 'on'].includes(normalized);
 };
 
+const normalizeDecisionTreeMode = (value) => {
+  const normalized = asString(value)?.toLowerCase();
+  return normalized && decisionTreeModes.includes(normalized)
+    ? normalized
+    : undefined;
+};
+
+const optionalDecisionTreeFlagValue = (value) => {
+  const mode = normalizeDecisionTreeMode(value);
+  if (mode) return { includeDecisionTree: true, decisionTreeMode: mode };
+
+  const stringValue = asString(value);
+  if (stringValue === undefined) {
+    return { includeDecisionTree: true, decisionTreeMode: 'inline' };
+  }
+
+  const normalized = stringValue.toLowerCase();
+  const booleanValues = [
+    '1',
+    'true',
+    'yes',
+    'y',
+    'on',
+    '0',
+    'false',
+    'no',
+    'n',
+    'off'
+  ];
+  if (!booleanValues.includes(normalized)) {
+    throw new Error(
+      '--decision-tree must be "inline", "fetch", true, or false.'
+    );
+  }
+
+  const includeDecisionTree = booleanFlagValue(stringValue);
+  return {
+    includeDecisionTree,
+    decisionTreeMode: includeDecisionTree ? 'inline' : null
+  };
+};
+
+const optionalDecisionTreeEnvValue = (value) =>
+  asString(value) === undefined
+    ? { includeDecisionTree: undefined, decisionTreeMode: undefined }
+    : optionalDecisionTreeFlagValue(value);
+
 const readFlagValue = (args, index, rawValue) => {
   if (rawValue !== undefined) return { nextIndex: index, value: rawValue };
 
   const next = args[index + 1];
-  if (!next || next.startsWith('--')) return { nextIndex: index, value: undefined };
+  if (!next || next.startsWith('--'))
+    return { nextIndex: index, value: undefined };
   return { nextIndex: index + 1, value: next };
 };
 
-export const parseRoutingChatCliArgs = args => {
+export const parseRoutingChatCliArgs = (args) => {
   const flags = {};
 
   for (let index = 0; index < args.length; index += 1) {
@@ -435,8 +529,10 @@ export const parseRoutingChatCliArgs = args => {
     const equalsIndex = arg.indexOf('=');
     const rawName =
       equalsIndex === -1 ? arg.slice(2) : arg.slice(2, equalsIndex);
-    const rawValue = equalsIndex === -1 ? undefined : arg.slice(equalsIndex + 1);
-    if (!knownFlagNames.has(rawName)) throw new Error(`Unknown option: --${rawName}`);
+    const rawValue =
+      equalsIndex === -1 ? undefined : arg.slice(equalsIndex + 1);
+    if (!knownFlagNames.has(rawName))
+      throw new Error(`Unknown option: --${rawName}`);
 
     if (rawName === 'help') {
       flags.help = true;
@@ -448,6 +544,23 @@ export const parseRoutingChatCliArgs = args => {
     }
     if (rawName === 'no-debug') {
       flags.debugManagedInterpretation = false;
+      continue;
+    }
+    if (rawName === 'decision-tree' || rawName === 'include-decision-tree') {
+      const next = args[index + 1];
+      const shouldReadNext =
+        rawValue === undefined && next && !next.startsWith('--');
+      const parsed = optionalDecisionTreeFlagValue(
+        shouldReadNext ? next : rawValue
+      );
+      flags.includeDecisionTree = parsed.includeDecisionTree;
+      flags.decisionTreeMode = parsed.decisionTreeMode;
+      if (shouldReadNext) index += 1;
+      continue;
+    }
+    if (rawName === 'no-decision-tree') {
+      flags.includeDecisionTree = false;
+      flags.decisionTreeMode = null;
       continue;
     }
     if (rawName === 'managed') {
@@ -476,12 +589,15 @@ export const parseRoutingChatCliArgs = args => {
       case 'target-system':
         flags.targetSystem = normalizeTargetSystem(value);
         if (!flags.targetSystem) {
-          throw new Error('--target-system must be "symptomscreen" or "cleartriage".');
+          throw new Error(
+            '--target-system must be "symptomscreen" or "cleartriage".'
+          );
         }
         break;
       case 'mode':
         flags.interpreterMode = normalizeInterpreterMode(value);
-        if (!flags.interpreterMode) throw new Error('--mode must be "managed" or "byo".');
+        if (!flags.interpreterMode)
+          throw new Error('--mode must be "managed" or "byo".');
         break;
       case 'date-of-birth':
         flags.dateOfBirth = value;
@@ -490,14 +606,18 @@ export const parseRoutingChatCliArgs = args => {
       case 'sex-assigned-at-birth':
         flags.sexAssignedAtBirth = normalizeSexAssignedAtBirth(value);
         if (!flags.sexAssignedAtBirth) {
-          throw new Error('--sex-assigned-at-birth must be "female", "male", or "unknown".');
+          throw new Error(
+            '--sex-assigned-at-birth must be "female", "male", or "unknown".'
+          );
         }
         break;
       case 'relationship':
       case 'relationship-to-patient':
         flags.relationshipToPatient = normalizeRelationshipToPatient(value);
         if (!flags.relationshipToPatient) {
-          throw new Error('--relationship-to-patient is not a supported relationship value.');
+          throw new Error(
+            '--relationship-to-patient is not a supported relationship value.'
+          );
         }
         break;
       case 'managed-initial-text':
@@ -509,10 +629,11 @@ export const parseRoutingChatCliArgs = args => {
   return flags;
 };
 
-export const routingChatDefaultsFromEnv = env => ({
+export const routingChatDefaultsFromEnv = (env) => ({
   baseUrl: asString(env[ROUTING_ENV.baseUrl]),
   organizationKey:
-    asString(env[ROUTING_ENV.apiKey]) ?? asString(env[ROUTING_ENV.organizationKey]),
+    asString(env[ROUTING_ENV.apiKey]) ??
+    asString(env[ROUTING_ENV.organizationKey]),
   targetSystem: normalizeTargetSystem(env[ROUTING_ENV.targetSystem]),
   interpreterMode: normalizeInterpreterMode(env[ROUTING_ENV.interpreterMode]),
   dateOfBirth: asString(env[ROUTING_ENV.dateOfBirth]),
@@ -523,6 +644,7 @@ export const routingChatDefaultsFromEnv = env => ({
     env[ROUTING_ENV.relationshipToPatient]
   ),
   managedInitialText: asString(env[ROUTING_ENV.managedInitialText]),
+  ...optionalDecisionTreeEnvValue(env[ROUTING_ENV.includeDecisionTree]),
   debugManagedInterpretation: booleanFlagValue(
     env[ROUTING_ENV.debugManagedInterpretation]
   )
