@@ -186,6 +186,7 @@ class RoutingChatCli {
     this.decisionTree = null;
     this.decisionTreeCursor = null;
     this.history = [];
+    this.lastConversationExchange = null;
     this.sessionToken = null;
   }
 
@@ -247,18 +248,26 @@ class RoutingChatCli {
     if (response.sessionToken) {
       this.sessionToken = response.sessionToken;
     }
-    this.history.push(
-      historyEntry({
-        label,
-        path: pathForHistoryLabel(label),
-        request,
-        response
-      })
-    );
+    const entry = historyEntry({
+      label,
+      path: pathForHistoryLabel(label),
+      request,
+      response
+    });
+    this.history.push(entry);
+    if (label !== 'Fetch decision tree') {
+      this.lastConversationExchange = entry;
+    }
   }
 
   withDecisionTreeResponseOptions(request) {
-    if (!request || this.config.decisionTreeMode !== 'inline') return request;
+    if (
+      !request ||
+      this.config.decisionTreeMode !== 'inline' ||
+      this.decisionTree
+    ) {
+      return request;
+    }
 
     return {
       ...request,
@@ -273,7 +282,9 @@ class RoutingChatCli {
     if (!this.config.includeDecisionTree) return;
 
     if (this.config.decisionTreeMode === 'inline' && response.decisionTree) {
-      this.loadDecisionTree(response.decisionTree);
+      if (!this.decisionTree) {
+        this.loadDecisionTree(response.decisionTree);
+      }
       return;
     }
 
@@ -742,7 +753,8 @@ class RoutingChatCli {
       return 'handled';
     }
 
-    const last = context.history[context.history.length - 1];
+    const last =
+      this.lastConversationExchange ?? context.history[context.history.length - 1];
     if (!last) {
       console.log('No API calls have been made yet.');
       return 'handled';
@@ -845,7 +857,7 @@ class RoutingChatCli {
         console.log(`- ${question.text}`);
       }
       console.log(
-        'Only :tree no takes the no/right branch. yes, maybe, unsure, and unclear take the safety-positive left branch.'
+        'yes, maybe, unsure, and unclear take the safety-positive left branch. no advances through grouped questions first, then takes the right branch.'
       );
       console.log(
         'This is local helper state only; answer the patient input prompt separately to continue the API session.'

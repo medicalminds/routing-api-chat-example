@@ -355,13 +355,25 @@ export const buildDateAdvanceRequest = ({ question, sessionToken, value }) => {
   };
 };
 
-export const buildUnresolvedAdvanceRequest = ({ question, sessionToken }) => ({
-  sessionToken,
-  structuredAnswer: {
-    type: 'unresolved',
-    questionId: String(question.id)
+export const buildUnresolvedAdvanceRequest = ({ question, sessionToken }) => {
+  if (isScreeningQuestion(question)) {
+    return {
+      sessionToken,
+      screeningAnswer: {
+        questionId: question.id,
+        answer: 'unclear'
+      }
+    };
   }
-});
+
+  return {
+    sessionToken,
+    structuredAnswer: {
+      type: 'unresolved',
+      questionId: String(question.id)
+    }
+  };
+};
 
 export const buildMessageAdvanceRequest = ({ sessionToken, text }) => {
   const trimmed = text.trim();

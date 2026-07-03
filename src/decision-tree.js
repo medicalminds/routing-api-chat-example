@@ -7,20 +7,50 @@ export class DecisionTreeTraversalError extends Error {
   }
 }
 
-export const isDecisionTreeAnswer = (value) => answerValues.has(value);
+export const normalizeDecisionTreeAnswer = (value) => {
+  if (typeof value !== 'string') return null;
+  const normalized = value.trim().toLowerCase();
+  return answerValues.has(normalized) ? normalized : null;
+};
 
-export const isDecisionTreeQuestionNode = (value) => value?.type === 'question';
+export const isDecisionTreeAnswer = (value) =>
+  normalizeDecisionTreeAnswer(value) !== null;
 
-export const isDecisionTreeOutcomeNode = (value) => value?.type === 'outcome';
+const isDecisionTreeQuestion = (value) =>
+  value &&
+  typeof value === 'object' &&
+  Number.isInteger(value.id) &&
+  typeof value.text === 'string' &&
+  value.text.trim().length > 0;
+
+export const isDecisionTreeQuestionNode = (value) =>
+  value?.type === 'question' &&
+  Array.isArray(value.questions) &&
+  value.questions.length > 0 &&
+  value.questions.every(isDecisionTreeQuestion);
+
+const isDecisionTreeOutcome = (value) =>
+  value &&
+  typeof value === 'object' &&
+  Number.isInteger(value.id) &&
+  Number.isInteger(value.acuity) &&
+  typeof value.name === 'string' &&
+  value.name.trim().length > 0 &&
+  typeof value.text === 'string' &&
+  value.text.trim().length > 0;
+
+export const isDecisionTreeOutcomeNode = (value) =>
+  value?.type === 'outcome' && isDecisionTreeOutcome(value.outcome);
 
 export const decisionTreeBranchForAnswer = (answer) => {
-  if (!isDecisionTreeAnswer(answer)) {
+  const normalized = normalizeDecisionTreeAnswer(answer);
+  if (!normalized) {
     throw new DecisionTreeTraversalError(
       `Unsupported decision tree answer: ${answer}`
     );
   }
 
-  return answer === 'no' ? 'right' : 'left';
+  return normalized === 'no' ? 'right' : 'left';
 };
 
 const parseDecisionTreeNode = (nodes, index) => {
@@ -32,6 +62,16 @@ const parseDecisionTreeNode = (nodes, index) => {
 
   const value = nodes[index];
   if (value === null) return { node: null, nextIndex: index + 1 };
+  if (value?.type === 'question' && !isDecisionTreeQuestionNode(value)) {
+    throw new DecisionTreeTraversalError(
+      'Decision tree question node must include at least one valid question.'
+    );
+  }
+  if (value?.type === 'outcome' && !isDecisionTreeOutcomeNode(value)) {
+    throw new DecisionTreeTraversalError(
+      'Decision tree outcome node must include a valid outcome.'
+    );
+  }
   if (!isDecisionTreeQuestionNode(value) && !isDecisionTreeOutcomeNode(value)) {
     throw new DecisionTreeTraversalError(
       'Decision tree contains an unsupported node value.'
@@ -72,20 +112,35 @@ export const deserializeDecisionTree = (decisionTree) => {
   return parsed.node;
 };
 
+const valueForCursor = (node, questionIndex) => {
+  if (!node) return null;
+  if (!isDecisionTreeQuestionNode(node.value)) return node.value;
+
+  return {
+    ...node.value,
+    questions: [node.value.questions[questionIndex]]
+  };
+};
+
 export const createDecisionTreeCursor = (decisionTree) => {
   const root = deserializeDecisionTree(decisionTree);
   let current = root;
+  let questionIndex = 0;
   const steps = [];
 
   return {
     current() {
-      return current?.value ?? null;
+      return valueForCursor(current, questionIndex);
     },
     currentNode() {
       return current;
     },
+    currentQuestionIndex() {
+      return questionIndex;
+    },
     answer(answer) {
-      if (!isDecisionTreeAnswer(answer)) {
+      const normalized = normalizeDecisionTreeAnswer(answer);
+      if (!normalized) {
         throw new DecisionTreeTraversalError(
           `Unsupported decision tree answer: ${answer}`
         );
@@ -95,21 +150,41 @@ export const createDecisionTreeCursor = (decisionTree) => {
         return current?.value ?? null;
       }
 
-      const branch = decisionTreeBranchForAnswer(answer);
+      const branch = decisionTreeBranchForAnswer(normalized);
+      const nextQuestionIndex = questionIndex + 1;
+      if (
+        branch === 'right' &&
+        nextQuestionIndex < current.value.questions.length
+      ) {
+        const next = valueForCursor(current, nextQuestionIndex);
+        steps.push({
+          question: valueForCursor(current, questionIndex),
+          questionIndex,
+          answer: normalized,
+          branch,
+          next
+        });
+        questionIndex = nextQuestionIndex;
+        return next;
+      }
+
       const next = branch === 'right' ? current.right : current.left;
       steps.push({
-        question: current.value,
-        answer,
+        question: valueForCursor(current, questionIndex),
+        questionIndex,
+        answer: normalized,
         branch,
-        next: next?.value ?? null
+        next: valueForCursor(next, 0)
       });
       current = next;
-      return current?.value ?? null;
+      questionIndex = 0;
+      return valueForCursor(current, questionIndex);
     },
     reset() {
       current = root;
+      questionIndex = 0;
       steps.splice(0, steps.length);
-      return current.value;
+      return valueForCursor(current, questionIndex);
     },
     isComplete() {
       return !current || isDecisionTreeOutcomeNode(current.value);

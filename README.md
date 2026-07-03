@@ -163,6 +163,7 @@ The CLI understands these environment variables:
 | `ROUTING_TARGET_SYSTEM`           | `symptomscreen` or `cleartriage`.                                                   |
 | `ROUTING_INTERPRETER_MODE`        | `managed` or `byo`.                                                                 |
 | `ROUTING_INCLUDE_DECISION_TREE`   | Optional. Use `true`, `inline`, or `fetch` to demonstrate the selected SymptomScreen tree. |
+| `ROUTING_DEBUG_MANAGED_INTERPRETATION` | Optional. Defaults on; use `false` to skip the managed-interpretation debug header. |
 | `ROUTING_DATE_OF_BIRTH`           | Optional known fact, `YYYY-MM-DD` or `MM/DD/YYYY`.                                  |
 | `ROUTING_SEX_ASSIGNED_AT_BIRTH`   | Optional known fact: `female`, `male`, or `unknown`.                                |
 | `ROUTING_RELATIONSHIP_TO_PATIENT` | Optional known fact, such as `self`, `parent`, or `caregiver`.                      |
@@ -187,20 +188,20 @@ Useful commands:
 | `:prompt`          | The active BYO model prompt.                                                                |
 | `:schema`          | The active BYO response schema.                                                             |
 | `:tree`            | Shows the local decision-tree helper state after the tree is loaded.                        |
-| `:tree no`         | Walks the local helper down the clean-no branch without sending an API turn.                |
+| `:tree no`         | Walks the local helper through a clean-no answer without sending an API turn.               |
 | `:tree maybe`      | Walks the local helper down the safety-positive branch without sending an API turn.         |
 | `:option 1`        | Sends the first listed option directly.                                                     |
 | `:number 3`        | Sends a numeric answer directly.                                                            |
 | `:date 2026-05-20` | Sends a date answer directly.                                                               |
-| `:unresolved`      | Sends an unresolved structured answer for the current question.                             |
+| `:unresolved`      | Sends unresolved for route questions, or `unclear` for SymptomScreen screening questions.   |
 
 For single-select questions, you can usually type the option number, the option id, or the visible label.
 
 ## Decision Tree Helper
 
-The file [src/decision-tree.js](./src/decision-tree.js) is deliberately standalone. It has no dependency on the CLI, no dependency on the HTTP client, and no dependency on a framework. If your app is plain JavaScript, you can copy that file into your project and pass it the `decisionTree` object returned by `responseOptions.includeDecisionTree` or `POST /routing/decision-tree`.
+The file [src/decision-tree.js](./src/decision-tree.js) is deliberately standalone. It has no dependency on the CLI, no dependency on the HTTP client, and no dependency on a framework. If your app is plain JavaScript, you can copy that file into your project, or import it from this example package as `routing-api-chat-example/decision-tree`, and pass it the `decisionTree` object returned by `responseOptions.includeDecisionTree` or `POST /routing/decision-tree`.
 
-The helper deserializes the public pre-order `nodes` array with `null` missing-child sentinels, creates a cursor over the tree, and applies the SymptomScreen safety rule. Only a clean `no` goes to the no/right branch. `yes`, `maybe`, `unsure`, and `unclear` all go to the safety-positive left branch.
+The helper deserializes the public pre-order `nodes` array with `null` missing-child sentinels, creates a cursor over the tree, and applies the SymptomScreen safety rule. It accepts `yes`, `no`, `maybe`, `unsure`, and `unclear`, normalizing casing and surrounding whitespace. `yes`, `maybe`, `unsure`, and `unclear` go to the safety-positive left branch. A clean `no` advances to the next question in the same question node when one exists. Only a clean `no` to the last question in that node goes to the no/right branch.
 
 ```js
 import { createDecisionTreeCursor } from './src/decision-tree.js';

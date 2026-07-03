@@ -287,6 +287,20 @@ test('turns direct answers into advance requests', () => {
   );
 
   assert.deepEqual(
+    buildUnresolvedAdvanceRequest({
+      sessionToken: 'token',
+      question: screeningQuestion
+    }),
+    {
+      sessionToken: 'token',
+      screeningAnswer: {
+        questionId: 501,
+        answer: 'unclear'
+      }
+    }
+  );
+
+  assert.deepEqual(
     buildMessageAdvanceRequest({ sessionToken: 'token', text: ' Hi ' }),
     {
       sessionToken: 'token',

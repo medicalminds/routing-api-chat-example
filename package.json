@@ -7,6 +7,9 @@
   "bin": {
     "routing-api-chat": "./src/cli.js"
   },
+  "exports": {
+    "./decision-tree": "./src/decision-tree.js"
+  },
   "scripts": {
     "start": "node ./src/cli.js",
     "chat": "node ./src/cli.js",

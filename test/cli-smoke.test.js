@@ -68,7 +68,10 @@ const sendJson = (res, body, status = 200) => {
   res.end(JSON.stringify(body));
 };
 
-const createMockRoutingApi = ({ inlineDecisionTree = true } = {}) => {
+const createMockRoutingApi = ({
+  inlineDecisionTree = true,
+  turnDecisionTree = false
+} = {}) => {
   const requests = [];
   const server = http.createServer(async (req, res) => {
     const body = await readJsonBody(req);
@@ -111,7 +114,7 @@ const createMockRoutingApi = ({ inlineDecisionTree = true } = {}) => {
     }
 
     if (req.method === 'POST' && req.url === '/api/routing/turns') {
-      sendJson(res, {
+      const response = {
         sessionToken: 'token-resolved',
         nextAction: {
           type: 'resolved',
@@ -128,7 +131,9 @@ const createMockRoutingApi = ({ inlineDecisionTree = true } = {}) => {
             screeningNote: 'Screening note from mock API.'
           }
         }
-      });
+      };
+      if (turnDecisionTree) response.decisionTree = decisionTree;
+      sendJson(res, response);
       return;
     }
 
@@ -161,7 +166,7 @@ const close = (server) =>
   });
 
 test('CLI can load an inline decision tree while sending normal turns', async () => {
-  const { requests, server } = createMockRoutingApi();
+  const { requests, server } = createMockRoutingApi({ turnDecisionTree: true });
   const port = await listen(server);
 
   const child = spawn(
@@ -214,7 +219,7 @@ test('CLI can load an inline decision tree while sending normal turns', async ()
 
   for (const text of [
     'Loaded Rash or Redness - Widespread.',
-    'Only :tree no takes the no/right branch',
+    'no advances through grouped questions first',
     'Current outcome node',
     'Outcome: Go now',
     'Screening outcome: Home care'
@@ -224,6 +229,10 @@ test('CLI can load an inline decision tree while sending normal turns', async ()
       new RegExp(text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
     );
   }
+  assert.equal(
+    stdout.match(/Loaded Rash or Redness - Widespread\./g)?.length,
+    1
+  );
 
   const start = requests.find(
     (request) => request.url === '/api/routing/sessions'
@@ -233,7 +242,7 @@ test('CLI can load an inline decision tree while sending normal turns', async ()
   assert.equal(start.body.responseOptions.includeDecisionTree, true);
   assert.equal(turn.body.screeningAnswer.questionId, 501);
   assert.equal(turn.body.screeningAnswer.answer, 'no');
-  assert.equal(turn.body.responseOptions.includeDecisionTree, true);
+  assert.equal(turn.body.responseOptions, undefined);
 });
 
 test('CLI can fetch a decision tree from the dedicated endpoint', async () => {
