@@ -49,6 +49,14 @@ const decisionTree = {
   ]
 };
 
+const completedDecisionTree = {
+  ...decisionTree,
+  initialOutcome: {
+    nodePath: ['right'],
+    outcomeId: 7
+  }
+};
+
 const readJsonBody = (req) =>
   new Promise((resolve) => {
     let body = '';
@@ -69,7 +77,9 @@ const sendJson = (res, body, status = 200) => {
 };
 
 const createMockRoutingApi = ({
+  endpointDecisionTree = decisionTree,
   inlineDecisionTree = true,
+  startResolved = false,
   turnDecisionTree = false
 } = {}) => {
   const requests = [];
@@ -82,6 +92,29 @@ const createMockRoutingApi = ({
     });
 
     if (req.method === 'POST' && req.url === '/api/routing/sessions') {
+      if (startResolved) {
+        const response = {
+          sessionToken: 'token-resolved',
+          nextAction: {
+            type: 'resolved',
+            targets: [
+              {
+                targetSystem: 'symptomscreen',
+                id: 95,
+                title: 'Rash or Redness - Widespread'
+              }
+            ],
+            screening: {
+              priorityId: 7,
+              outcomeText: 'Home care'
+            }
+          }
+        };
+        if (inlineDecisionTree) response.decisionTree = endpointDecisionTree;
+        sendJson(res, response);
+        return;
+      }
+
       const response = {
         sessionToken: 'token-screening',
         nextAction: {
@@ -109,7 +142,7 @@ const createMockRoutingApi = ({
     }
 
     if (req.method === 'POST' && req.url === '/api/routing/decision-tree') {
-      sendJson(res, { decisionTree });
+      sendJson(res, { decisionTree: endpointDecisionTree });
       return;
     }
 
@@ -318,6 +351,67 @@ test('CLI can fetch a decision tree from the dedicated endpoint', async () => {
   assert.deepEqual(tree.body, { sessionToken: 'token-screening' });
   assert.equal(turn.body.screeningAnswer.answer, 'no');
   assert.equal(turn.body.responseOptions, undefined);
+});
+
+test('CLI can fetch a completed decision tree from the dedicated endpoint', async () => {
+  const { requests, server } = createMockRoutingApi({
+    endpointDecisionTree: completedDecisionTree,
+    inlineDecisionTree: false,
+    startResolved: true
+  });
+  const port = await listen(server);
+
+  const child = spawn(
+    process.execPath,
+    [
+      './src/cli.js',
+      '--base-url',
+      `http://127.0.0.1:${port}/api`,
+      '--api-key',
+      'test-key',
+      '--mode',
+      'byo',
+      '--target-system',
+      'symptomscreen',
+      '--decision-tree=fetch'
+    ],
+    {
+      cwd: process.cwd(),
+      stdio: ['pipe', 'pipe', 'pipe']
+    }
+  );
+
+  let stdout = '';
+  let stderr = '';
+  child.stdout.on('data', (chunk) => {
+    stdout += chunk;
+  });
+  child.stderr.on('data', (chunk) => {
+    stderr += chunk;
+  });
+
+  const timeout = setTimeout(() => {
+    child.kill('SIGKILL');
+  }, 5000);
+  const exitCode = await new Promise((resolve) => {
+    child.on('close', resolve);
+  });
+  clearTimeout(timeout);
+  await close(server);
+
+  assert.equal(exitCode, 0, stdout);
+  assert.equal(stderr.trim(), '');
+  assert.match(stdout, /Loaded Rash or Redness - Widespread\./);
+  assert.match(stdout, /Screening outcome: Home care/);
+  assert.match(stdout, /Decision tree helper: loaded at final helper state/);
+
+  const tree = requests.find(
+    (request) => request.url === '/api/routing/decision-tree'
+  );
+  const turn = requests.find((request) => request.url === '/api/routing/turns');
+
+  assert.deepEqual(tree.body, { sessionToken: 'token-resolved' });
+  assert.equal(turn, undefined);
 });
 
 test('CLI rejects decision-tree mode for ClearTriage sessions', async () => {

@@ -291,12 +291,17 @@ class RoutingChatCli {
       return;
     }
 
+    const reachedSymptomScreen =
+      (response.nextAction?.type === 'ask' &&
+        typeof response.nextAction.question?.id === 'number') ||
+      (response.nextAction?.type === 'resolved' &&
+        Boolean(response.nextAction.screening));
+
     if (
       !this.client ||
       this.decisionTree ||
       !response.sessionToken ||
-      response.nextAction?.type !== 'ask' ||
-      typeof response.nextAction.question?.id !== 'number'
+      !reachedSymptomScreen
     ) {
       return;
     }
@@ -420,7 +425,12 @@ class RoutingChatCli {
 
     if (this.decisionTree) {
       console.log('');
-      printField('Decision tree helper', 'loaded; type :tree to inspect');
+      printField(
+        'Decision tree helper',
+        action.type === 'ask'
+          ? 'loaded; type :tree to inspect'
+          : 'loaded at final helper state'
+      );
     }
   }
 

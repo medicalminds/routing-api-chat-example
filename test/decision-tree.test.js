@@ -325,6 +325,22 @@ test('starts from a nested server-provided initial cursor', () => {
   assert.equal(cursor.answer('no').outcome.name, 'Home care');
 });
 
+test('starts from the server-provided initial outcome when present', () => {
+  const cursor = createDecisionTreeCursor({
+    ...decisionTree,
+    initialOutcome: {
+      nodePath: ['right'],
+      outcomeId: 7
+    }
+  });
+
+  assert.equal(cursor.current().outcome.name, 'Home care');
+  assert.equal(cursor.currentQuestionIndex(), 0);
+  assert.equal(cursor.isComplete(), true);
+  assert.equal(cursor.answer('yes').outcome.name, 'Home care');
+  assert.equal(cursor.reset().outcome.name, 'Home care');
+});
+
 test('rejects invalid initial cursors', () => {
   assert.throws(
     () =>
@@ -363,6 +379,61 @@ test('rejects invalid initial cursors', () => {
         }
       }),
     /initial cursor does not match a question/
+  );
+});
+
+test('rejects invalid initial outcomes', () => {
+  assert.throws(
+    () =>
+      createDecisionTreeCursor({
+        ...decisionTree,
+        initialOutcome: {
+          nodePath: 'right',
+          outcomeId: 7
+        }
+      }),
+    /initial outcome is malformed/
+  );
+
+  assert.throws(
+    () =>
+      createDecisionTreeCursor({
+        ...decisionTree,
+        initialOutcome: {
+          nodePath: [],
+          outcomeId: 7
+        }
+      }),
+    /initial outcome does not point to an outcome node/
+  );
+
+  assert.throws(
+    () =>
+      createDecisionTreeCursor({
+        ...decisionTree,
+        initialOutcome: {
+          nodePath: ['right'],
+          outcomeId: 1
+        }
+      }),
+    /initial outcome does not match an outcome/
+  );
+
+  assert.throws(
+    () =>
+      createDecisionTreeCursor({
+        ...decisionTree,
+        initialCursor: {
+          nodePath: [],
+          questionIndex: 0,
+          questionId: 501
+        },
+        initialOutcome: {
+          nodePath: ['right'],
+          outcomeId: 7
+        }
+      }),
+    /cannot include both initialCursor and initialOutcome/
   );
 });
 

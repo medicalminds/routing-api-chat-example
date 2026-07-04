@@ -178,6 +178,8 @@ The response body contains the selected public tree:
 
 This endpoint requires `GetDecisionTree` access on the organization key that started the session. You can also ask for the tree inline by sending `responseOptions.includeDecisionTree: true` on `POST /routing/sessions` and follow-up `POST /routing/turns`. In this CLI, pass `--decision-tree` or `--decision-tree=inline` for inline mode. Pass `--decision-tree=fetch` when you want the example to call the dedicated endpoint instead.
 
+When `initialCursor` is present, the helper starts at that question because the API has already skipped or auto-answered earlier screening questions for the current session. When `initialOutcome` is present instead, the session has already completed SymptomScreen screening, and the helper starts at that final outcome node rather than restarting at the root. A valid tree uses at most one of those starting markers.
+
 Session responses from `POST /routing/sessions` and `POST /routing/turns` include a new `sessionToken` and a `nextAction`. The action type tells your client what to do next:
 
 | Action     | What your app should do                                 |
@@ -239,7 +241,7 @@ For single-select questions, you can usually type the option number, the option 
 
 The file [src/decision-tree.js](./src/decision-tree.js) is deliberately standalone. It has no dependency on the CLI, no dependency on the HTTP client, and no dependency on a framework. If your app is plain JavaScript, copy that file into your project and pass it the `decisionTree` object returned after requesting `responseOptions.includeDecisionTree` or calling `POST /routing/decision-tree`. This example package is private, but it also exposes `routing-api-chat-example/decision-tree` so workspace consumers can import the same standalone helper without reaching into the `src` directory.
 
-The helper deserializes the public pre-order `nodes` array with `null` missing-child sentinels, starts at `decisionTree.initialCursor` when the API includes one, creates a cursor over the tree, and applies the SymptomScreen safety rule. SymptomScreen guide questions expect a clean yes or no. The helper accepts `yes`, `no`, `maybe`, `unsure`, and `unclear`, normalizing casing and surrounding whitespace. `yes`, `maybe`, `unsure`, and `unclear` go to the safety-positive left branch. A clean `no` advances to the next question in the same question node when one exists. Only a clean `no` to the last question in that node goes to the no/right branch.
+The helper deserializes the public pre-order `nodes` array with `null` missing-child sentinels, starts at `decisionTree.initialCursor` when the API includes one, starts at `decisionTree.initialOutcome` when screening has already completed, creates a cursor over the tree, and applies the SymptomScreen safety rule. SymptomScreen guide questions expect a clean yes or no. The helper accepts `yes`, `no`, `maybe`, `unsure`, and `unclear`, normalizing casing and surrounding whitespace. `yes`, `maybe`, `unsure`, and `unclear` go to the safety-positive left branch. A clean `no` advances to the next question in the same question node when one exists. Only a clean `no` to the last question in that node goes to the no/right branch.
 
 Keep using `nextAction.question.text` as the prompt you show or speak to the caller. The tree is for local traversal state and may start after the root when the API has already skipped or auto-answered earlier screening questions.
 

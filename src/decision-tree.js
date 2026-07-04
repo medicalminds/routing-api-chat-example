@@ -166,16 +166,50 @@ const nodeAtPath = (root, path) =>
     return branch === 'left' ? node.left : node.right;
   }, root);
 
-const isInitialCursorPath = (value) =>
+const isDecisionTreeNodePath = (value) =>
   Array.isArray(value) &&
   value.every((branch) => branch === 'left' || branch === 'right');
 
-const initialCursorPosition = (decisionTree, root) => {
+const initialPosition = (decisionTree, root) => {
+  const initialOutcome = decisionTree.initialOutcome;
   const initialCursor = decisionTree.initialCursor;
+
+  if (initialCursor && initialOutcome) {
+    throw new DecisionTreeTraversalError(
+      'Decision tree cannot include both initialCursor and initialOutcome.'
+    );
+  }
+
+  if (initialOutcome) {
+    if (
+      !isDecisionTreeNodePath(initialOutcome.nodePath) ||
+      !Number.isInteger(initialOutcome.outcomeId)
+    ) {
+      throw new DecisionTreeTraversalError(
+        'Decision tree initial outcome is malformed.'
+      );
+    }
+
+    const node = nodeAtPath(root, initialOutcome.nodePath);
+    if (!node || !isDecisionTreeOutcomeNode(node.value)) {
+      throw new DecisionTreeTraversalError(
+        'Decision tree initial outcome does not point to an outcome node.'
+      );
+    }
+
+    if (node.value.outcome.id !== initialOutcome.outcomeId) {
+      throw new DecisionTreeTraversalError(
+        'Decision tree initial outcome does not match an outcome in the tree.'
+      );
+    }
+
+    return { node, questionIndex: 0 };
+  }
+
   if (!initialCursor) return { node: root, questionIndex: 0 };
 
   if (
-    !isInitialCursorPath(initialCursor.nodePath) ||
+    !isDecisionTreeNodePath(initialCursor.nodePath) ||
     !Number.isInteger(initialCursor.questionIndex) ||
     initialCursor.questionIndex < 0 ||
     !Number.isInteger(initialCursor.questionId)
@@ -204,9 +238,9 @@ const initialCursorPosition = (decisionTree, root) => {
 
 export const createDecisionTreeCursor = (decisionTree) => {
   const root = deserializeDecisionTree(decisionTree);
-  const initialPosition = initialCursorPosition(decisionTree, root);
-  let current = initialPosition.node;
-  let questionIndex = initialPosition.questionIndex;
+  const startingPosition = initialPosition(decisionTree, root);
+  let current = startingPosition.node;
+  let questionIndex = startingPosition.questionIndex;
   const steps = [];
 
   return {
@@ -262,8 +296,8 @@ export const createDecisionTreeCursor = (decisionTree) => {
       return valueForCursor(current, questionIndex);
     },
     reset() {
-      current = initialPosition.node;
-      questionIndex = initialPosition.questionIndex;
+      current = startingPosition.node;
+      questionIndex = startingPosition.questionIndex;
       steps.splice(0, steps.length);
       return valueForCursor(current, questionIndex);
     },
