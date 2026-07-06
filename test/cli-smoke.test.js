@@ -252,9 +252,9 @@ test('CLI can load an inline decision tree while sending normal turns', async ()
 
   for (const text of [
     'Loaded Rash or Redness - Widespread.',
-    'no advances through grouped questions first',
+    'Only a clear no continues down the lower-acuity path.',
     'Preview after a local helper answer. No API turn was sent.',
-    'Current outcome node',
+    'Current outcome',
     'Outcome: Go now',
     'Synchronized from successful API screening answer.',
     'Outcome: Home care',

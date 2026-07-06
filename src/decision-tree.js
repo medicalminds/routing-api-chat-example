@@ -1,5 +1,12 @@
 const answerValues = new Set(['yes', 'no', 'maybe', 'unsure', 'unclear']);
 
+/**
+ * The same normalized answer vocabulary accepted by the Routing API
+ * `screeningAnswer.answer` field on POST /routing/turns.
+ *
+ * @typedef {'yes' | 'no' | 'maybe' | 'unsure' | 'unclear'} DecisionTreeAnswer
+ */
+
 export class DecisionTreeTraversalError extends Error {
   constructor(message) {
     super(message);
@@ -7,7 +14,7 @@ export class DecisionTreeTraversalError extends Error {
   }
 }
 
-export const normalizeDecisionTreeAnswer = (value) => {
+const normalizeDecisionTreeAnswer = (value) => {
   if (typeof value !== 'string') return null;
   const normalized = value.trim().toLowerCase();
   return answerValues.has(normalized) ? normalized : null;
@@ -23,7 +30,7 @@ const isDecisionTreeQuestion = (value) =>
   typeof value.text === 'string' &&
   value.text.trim().length > 0;
 
-export const isDecisionTreeQuestionNode = (value) =>
+const isDecisionTreeQuestionNode = (value) =>
   value?.type === 'question' &&
   Array.isArray(value.questions) &&
   value.questions.length > 0 &&
@@ -39,10 +46,10 @@ const isDecisionTreeOutcome = (value) =>
   typeof value.text === 'string' &&
   value.text.trim().length > 0;
 
-export const isDecisionTreeOutcomeNode = (value) =>
+const isDecisionTreeOutcomeNode = (value) =>
   value?.type === 'outcome' && isDecisionTreeOutcome(value.outcome);
 
-export const decisionTreeBranchForAnswer = (answer) => {
+const decisionTreeBranchForAnswer = (answer) => {
   const normalized = normalizeDecisionTreeAnswer(answer);
   if (!normalized) {
     throw new DecisionTreeTraversalError(
@@ -69,22 +76,6 @@ const validateDecisionTreeEnvelope = (decisionTree) => {
       'Decision tree payload must target SymptomScreen.'
     );
   }
-};
-
-const cloneDecisionTreeValue = (value) => {
-  if (isDecisionTreeQuestionNode(value)) {
-    return {
-      ...value,
-      questions: value.questions.map((question) => ({ ...question }))
-    };
-  }
-  if (isDecisionTreeOutcomeNode(value)) {
-    return {
-      ...value,
-      outcome: { ...value.outcome }
-    };
-  }
-  return value;
 };
 
 const parseDecisionTreeNode = (nodes, index) => {
@@ -125,7 +116,7 @@ const parseDecisionTreeNode = (nodes, index) => {
   };
 };
 
-export const deserializeDecisionTree = (decisionTree) => {
+const deserializeDecisionTree = (decisionTree) => {
   validateDecisionTreeEnvelope(decisionTree);
 
   const nodes = decisionTree?.nodes;
@@ -148,16 +139,32 @@ export const deserializeDecisionTree = (decisionTree) => {
   return parsed.node;
 };
 
-const valueForCursor = (node, questionIndex) => {
+const cloneTargets = (targets) =>
+  Array.isArray(targets) ? targets.map((target) => ({ ...target })) : [];
+
+const valueForCurrent = ({ node, questionIndex, targets }) => {
   if (!node) return null;
-  if (!isDecisionTreeQuestionNode(node.value)) {
-    return cloneDecisionTreeValue(node.value);
+
+  if (isDecisionTreeQuestionNode(node.value)) {
+    const question = node.value.questions[questionIndex];
+    if (!question) return null;
+
+    return {
+      type: 'question',
+      question: { ...question },
+      targets: cloneTargets(targets)
+    };
   }
 
-  return {
-    ...node.value,
-    questions: [{ ...node.value.questions[questionIndex] }]
-  };
+  if (isDecisionTreeOutcomeNode(node.value)) {
+    return {
+      type: 'outcome',
+      outcome: { ...node.value.outcome },
+      targets: cloneTargets(targets)
+    };
+  }
+
+  return null;
 };
 
 const nodeAtPath = (root, path) =>
@@ -236,23 +243,30 @@ const initialPosition = (decisionTree, root) => {
   return { node, questionIndex: initialCursor.questionIndex };
 };
 
-export const createDecisionTreeCursor = (decisionTree) => {
+const currentQuestion = (node, questionIndex) => {
+  if (!node || !isDecisionTreeQuestionNode(node.value)) return null;
+  const question = node.value.questions[questionIndex];
+  return question ? { ...question } : null;
+};
+
+export const loadDecisionTree = (decisionTree) => {
   const root = deserializeDecisionTree(decisionTree);
   const startingPosition = initialPosition(decisionTree, root);
   let current = startingPosition.node;
   let questionIndex = startingPosition.questionIndex;
+  const targets = decisionTree.targets;
   const steps = [];
 
   return {
     current() {
-      return valueForCursor(current, questionIndex);
+      return valueForCurrent({ node: current, questionIndex, targets });
     },
-    currentNode() {
-      return current;
-    },
-    currentQuestionIndex() {
-      return questionIndex;
-    },
+    /**
+     * Advance with the same value your app would send to /routing/turns as
+     * `screeningAnswer.answer`.
+     *
+     * @param {DecisionTreeAnswer | string} answer
+     */
     answer(answer) {
       const normalized = normalizeDecisionTreeAnswer(answer);
       if (!normalized) {
@@ -262,50 +276,41 @@ export const createDecisionTreeCursor = (decisionTree) => {
       }
 
       if (!current || !isDecisionTreeQuestionNode(current.value)) {
-        return current?.value ?? null;
+        return valueForCurrent({ node: current, questionIndex, targets });
       }
 
       const branch = decisionTreeBranchForAnswer(normalized);
+      const question = currentQuestion(current, questionIndex);
       const nextQuestionIndex = questionIndex + 1;
       if (
         branch === 'right' &&
         nextQuestionIndex < current.value.questions.length
       ) {
-        const next = valueForCursor(current, nextQuestionIndex);
-        steps.push({
-          question: valueForCursor(current, questionIndex),
-          questionIndex,
-          answer: normalized,
-          branch,
-          next
-        });
+        if (question) steps.push({ question, answer: normalized });
         questionIndex = nextQuestionIndex;
-        return next;
+        return valueForCurrent({ node: current, questionIndex, targets });
       }
 
       const next = branch === 'right' ? current.right : current.left;
-      steps.push({
-        question: valueForCursor(current, questionIndex),
-        questionIndex,
-        answer: normalized,
-        branch,
-        next: valueForCursor(next, 0)
-      });
+      if (question) steps.push({ question, answer: normalized });
       current = next;
       questionIndex = 0;
-      return valueForCursor(current, questionIndex);
+      return valueForCurrent({ node: current, questionIndex, targets });
     },
     reset() {
       current = startingPosition.node;
       questionIndex = startingPosition.questionIndex;
       steps.splice(0, steps.length);
-      return valueForCursor(current, questionIndex);
+      return valueForCurrent({ node: current, questionIndex, targets });
     },
     isComplete() {
       return !current || isDecisionTreeOutcomeNode(current.value);
     },
-    path() {
-      return [...steps];
+    history() {
+      return steps.map((step) => ({
+        question: { ...step.question },
+        answer: step.answer
+      }));
     }
   };
 };

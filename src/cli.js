@@ -9,10 +9,8 @@ import {
   RoutingInvalidResponseError
 } from './client.js';
 import {
-  createDecisionTreeCursor,
   isDecisionTreeAnswer,
-  isDecisionTreeOutcomeNode,
-  isDecisionTreeQuestionNode
+  loadDecisionTree as createDecisionTreeHelper
 } from './decision-tree.js';
 import {
   DEFAULT_ROUTING_API_BASE_URL,
@@ -185,7 +183,7 @@ class RoutingChatCli {
     this.config = config;
     this.client = null;
     this.decisionTree = null;
-    this.decisionTreeCursor = null;
+    this.decisionTreeHelper = null;
     this.decisionTreeScreeningAnswers = [];
     this.history = [];
     this.lastConversationExchange = null;
@@ -348,11 +346,11 @@ class RoutingChatCli {
   replayDecisionTreeScreeningAnswers() {
     if (!this.decisionTree) return;
 
-    const cursor = createDecisionTreeCursor(this.decisionTree);
+    const helper = createDecisionTreeHelper(this.decisionTree);
     for (const answer of this.decisionTreeScreeningAnswers) {
-      cursor.answer(answer);
+      helper.answer(answer);
     }
-    this.decisionTreeCursor = cursor;
+    this.decisionTreeHelper = helper;
   }
 
   renderResponse(response) {
@@ -867,7 +865,7 @@ class RoutingChatCli {
   }
 
   handleTreeCommand(line) {
-    if (!this.decisionTreeCursor) {
+    if (!this.decisionTreeHelper) {
       console.log(
         'No decision tree has been loaded yet. Start with --decision-tree and wait until SymptomScreen screening is reached.'
       );
@@ -881,7 +879,7 @@ class RoutingChatCli {
         console.log('Use yes, no, maybe, unsure, or unclear after :tree.');
         return;
       }
-      this.decisionTreeCursor.answer(answer);
+      this.decisionTreeHelper.answer(answer);
     }
 
     this.renderDecisionTreeCursor({
@@ -892,22 +890,20 @@ class RoutingChatCli {
   }
 
   renderDecisionTreeCursor({ intro } = {}) {
-    const value = this.decisionTreeCursor.current();
+    const value = this.decisionTreeHelper.current();
     printSection('Decision tree helper');
     if (intro) console.log(intro);
-    if (isDecisionTreeQuestionNode(value)) {
-      console.log('Current question node');
-      for (const question of value.questions) {
-        console.log(`- ${question.text}`);
-      }
+    if (value?.type === 'question') {
+      console.log('Current question');
+      console.log(`- ${value.question.text}`);
       console.log(
-        'yes, maybe, unsure, and unclear take the safety-positive left branch. no advances through grouped questions first, then takes the right branch.'
+        'Answer yes, no, maybe, unsure, or unclear. Only a clear no continues down the lower-acuity path.'
       );
       console.log(
         'Answer the patient input prompt to continue the API session. Successful SymptomScreen answers keep this helper state in sync.'
       );
-    } else if (isDecisionTreeOutcomeNode(value)) {
-      console.log('Current outcome node');
+    } else if (value?.type === 'outcome') {
+      console.log('Current outcome');
       printField('Outcome', value.outcome.text);
       printField('Priority', value.outcome.acuity);
       console.log(

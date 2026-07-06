@@ -241,23 +241,25 @@ For single-select questions, you can usually type the option number, the option 
 
 The file [src/decision-tree.js](./src/decision-tree.js) is deliberately standalone. It has no dependency on the CLI, no dependency on the HTTP client, and no dependency on a framework. If your app is plain JavaScript, copy that file into your project and pass it the `decisionTree` object returned after requesting `responseOptions.includeDecisionTree` or calling `POST /routing/decision-tree`. This example package is private, but it also exposes `routing-api-chat-example/decision-tree` so workspace consumers can import the same standalone helper without reaching into the `src` directory.
 
-The helper deserializes the public pre-order `nodes` array with `null` missing-child sentinels, starts at `decisionTree.initialCursor` when the API includes one, starts at `decisionTree.initialOutcome` when screening has already completed, creates a cursor over the tree, and applies the SymptomScreen safety rule. SymptomScreen guide questions expect a clean yes or no. The helper accepts `yes`, `no`, `maybe`, `unsure`, and `unclear`, normalizing casing and surrounding whitespace. `yes`, `maybe`, `unsure`, and `unclear` go to the safety-positive left branch. A clean `no` advances to the next question in the same question node when one exists. Only a clean `no` to the last question in that node goes to the no/right branch.
+The helper hides the serialized tree details and gives your app a small local traversal object. It starts at `decisionTree.initialCursor` when the API includes one, starts at `decisionTree.initialOutcome` when screening has already completed, and returns one current question or outcome at a time. The helper accepts the same normalized answer values as `screeningAnswer.answer` on `POST /routing/turns`: `yes`, `no`, `maybe`, `unsure`, and `unclear`. That means an existing BYO interpreter can pass the same extracted answer value to `tree.answer(answer)` when switching from server traversal to local traversal. Only a clean `no` continues down the lower-acuity path. `yes`, `maybe`, `unsure`, and `unclear` are treated as safety-positive answers.
 
-Keep using `nextAction.question.text` as the prompt you show or speak to the caller. The tree is for local traversal state and may start after the root when the API has already skipped or auto-answered earlier screening questions.
+If you continue calling `POST /routing/turns`, keep using `nextAction.question.text` as the prompt you show or speak to the caller. If you traverse locally, use `tree.current().question.text`. The tree may start after the root when the API has already skipped or auto-answered earlier screening questions.
 
 The helper models local branch safety only. Server-authoritative traversal through `POST /routing/turns` may still return another `ask` action before advancing, such as when the caller answer is `unclear` and the API chooses to re-ask once before taking the safety-positive branch.
 
 ```js
-import { createDecisionTreeCursor } from './src/decision-tree.js';
+import { loadDecisionTree } from 'routing-api-chat-example/decision-tree';
 
-const cursor = createDecisionTreeCursor(decisionTree);
+const tree = loadDecisionTree(decisionTree);
 
-while (cursor.current()?.type === 'question') {
-  const answer = await collectAnswerFromYourUi(cursor.current().questions);
-  cursor.answer(answer);
+while (tree.current()?.type === 'question') {
+  const { question } = tree.current();
+  const answer = await collectAnswerFromYourUi(question);
+  // answer is the same value you would send as screeningAnswer.answer.
+  tree.answer(answer);
 }
 
-console.log(cursor.current().outcome.text);
+console.log(tree.current().outcome.text);
 ```
 
 That local traversal is optional and independent from the active Routing API session. The safest and simplest integration remains server-authoritative traversal through `POST /routing/turns`; the helper is for consumers that specifically need the full selected tree in their own app.

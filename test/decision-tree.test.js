@@ -2,10 +2,8 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   DecisionTreeTraversalError,
-  createDecisionTreeCursor,
-  decisionTreeBranchForAnswer,
-  deserializeDecisionTree,
-  normalizeDecisionTreeAnswer
+  isDecisionTreeAnswer,
+  loadDecisionTree
 } from '../src/decision-tree.js';
 
 const decisionTree = {
@@ -160,57 +158,56 @@ const nestedInitialCursorDecisionTree = {
   ]
 };
 
-test('deserializes a public SymptomScreen decision tree', () => {
-  const root = deserializeDecisionTree(decisionTree);
+test('loads a public SymptomScreen decision tree and returns the current question', () => {
+  const helper = loadDecisionTree(decisionTree);
 
-  assert.equal(root.value.type, 'question');
-  assert.equal(root.left.value.outcome.name, 'Go now');
-  assert.equal(root.right.value.outcome.name, 'Home care');
+  assert.deepEqual(helper.current(), {
+    type: 'question',
+    question: {
+      id: 501,
+      text: 'Do they have trouble breathing?'
+    },
+    targets: decisionTree.targets
+  });
+  assert.equal(helper.isComplete(), false);
 });
 
-test('treats only a clean no as the no branch', () => {
-  assert.equal(decisionTreeBranchForAnswer('no'), 'right');
-  assert.equal(decisionTreeBranchForAnswer(' No '), 'right');
-  assert.equal(normalizeDecisionTreeAnswer(' Unclear '), 'unclear');
+test('accepts the same answer values used by /routing/turns screeningAnswer', () => {
+  assert.equal(isDecisionTreeAnswer('no'), true);
+  assert.equal(isDecisionTreeAnswer(' No '), true);
+  assert.equal(isDecisionTreeAnswer('Unsure'), true);
+  assert.equal(isDecisionTreeAnswer('unknown'), false);
 
-  for (const answer of ['yes', 'maybe', 'unsure', 'unclear']) {
-    assert.equal(decisionTreeBranchForAnswer(answer), 'left');
-  }
-  assert.equal(decisionTreeBranchForAnswer('Unsure'), 'left');
+  const helper = loadDecisionTree(decisionTree);
+  assert.equal(helper.answer(' Unclear ').outcome.name, 'Go now');
 
   assert.throws(
-    () => decisionTreeBranchForAnswer('unknown'),
+    () => loadDecisionTree(decisionTree).answer('unknown'),
     DecisionTreeTraversalError
   );
 });
 
-test('walks a decision tree with a cursor', () => {
-  const cursor = createDecisionTreeCursor(decisionTree);
+test('walks to the outcome for safety-positive and clean-no answers', () => {
+  const helper = loadDecisionTree(decisionTree);
 
-  assert.equal(cursor.current().type, 'question');
-  assert.equal(cursor.answer('unclear').outcome.name, 'Go now');
-  assert.equal(cursor.isComplete(), true);
-  assert.deepEqual(
-    cursor.path().map((step) => ({
-      answer: step.answer,
-      branch: step.branch,
-      nextType: step.next.type
-    })),
-    [
-      {
-        answer: 'unclear',
-        branch: 'left',
-        nextType: 'outcome'
-      }
-    ]
-  );
+  assert.equal(helper.answer('unclear').outcome.name, 'Go now');
+  assert.equal(helper.isComplete(), true);
+  assert.deepEqual(helper.history(), [
+    {
+      question: {
+        id: 501,
+        text: 'Do they have trouble breathing?'
+      },
+      answer: 'unclear'
+    }
+  ]);
 
-  cursor.reset();
-  assert.equal(cursor.answer('no').outcome.name, 'Home care');
+  helper.reset();
+  assert.equal(helper.answer('no').outcome.name, 'Home care');
 });
 
 test('treats missing branches as completed empty traversal', () => {
-  const cursor = createDecisionTreeCursor({
+  const helper = loadDecisionTree({
     ...decisionTree,
     nodes: [
       decisionTree.nodes[0],
@@ -221,84 +218,84 @@ test('treats missing branches as completed empty traversal', () => {
     ]
   });
 
-  assert.equal(cursor.answer('yes'), null);
-  assert.equal(cursor.current(), null);
-  assert.equal(cursor.isComplete(), true);
+  assert.equal(helper.answer('yes'), null);
+  assert.equal(helper.current(), null);
+  assert.equal(helper.isComplete(), true);
 });
 
-test('returns cursor values without exposing mutable traversal state', () => {
-  const cursor = createDecisionTreeCursor(decisionTree);
-  const question = cursor.current();
-  question.questions[0].text = 'Changed by a caller UI';
+test('returns values without exposing mutable traversal state', () => {
+  const helper = loadDecisionTree(decisionTree);
+  const current = helper.current();
+  current.question.text = 'Changed by a caller UI';
+  current.targets[0].title = 'Changed guide title';
 
   assert.equal(
-    cursor.current().questions[0].text,
+    helper.current().question.text,
     'Do they have trouble breathing?'
   );
+  assert.equal(
+    helper.current().targets[0].title,
+    'Rash or Redness - Widespread'
+  );
 
-  const outcome = cursor.answer('yes');
+  const outcome = helper.answer('yes');
   outcome.outcome.text = 'Changed by a caller UI';
 
-  assert.equal(cursor.current().outcome.text, 'Go now');
+  assert.equal(helper.current().outcome.text, 'Go now');
 });
 
-test('walks grouped questions before taking the no branch', () => {
-  const cursor = createDecisionTreeCursor(groupedQuestionDecisionTree);
+test('walks grouped questions one flat question at a time', () => {
+  const helper = loadDecisionTree(groupedQuestionDecisionTree);
 
-  assert.equal(cursor.current().questions[0].id, 501);
-  assert.equal(cursor.currentQuestionIndex(), 0);
-  assert.equal(cursor.answer('no').questions[0].id, 502);
-  assert.equal(cursor.isComplete(), false);
-  assert.equal(cursor.currentQuestionIndex(), 1);
-  assert.equal(cursor.answer('no').outcome.name, 'Home care');
+  assert.equal(helper.current().question.id, 501);
+  assert.equal(helper.answer('no').question.id, 502);
+  assert.equal(helper.isComplete(), false);
+  assert.equal(helper.answer('no').outcome.name, 'Home care');
   assert.deepEqual(
-    cursor.path().map((step) => ({
-      questionId: step.question.questions[0].id,
-      questionIndex: step.questionIndex,
-      branch: step.branch
+    helper.history().map((step) => ({
+      questionId: step.question.id,
+      answer: step.answer
     })),
     [
       {
         questionId: 501,
-        questionIndex: 0,
-        branch: 'right'
+        answer: 'no'
       },
       {
         questionId: 502,
-        questionIndex: 1,
-        branch: 'right'
+        answer: 'no'
       }
     ]
   );
 
-  cursor.reset();
-  assert.equal(cursor.answer('unsure').outcome.name, 'Go now');
-  cursor.reset();
-  assert.equal(cursor.answer(' Unclear ').outcome.name, 'Go now');
+  helper.reset();
+  assert.equal(helper.answer('unsure').outcome.name, 'Go now');
+  helper.reset();
+  assert.equal(helper.answer(' Unclear ').outcome.name, 'Go now');
 
-  cursor.reset();
-  assert.equal(cursor.answer('no').questions[0].id, 502);
-  assert.equal(cursor.answer('yes').outcome.name, 'Go now');
+  helper.reset();
+  assert.equal(helper.answer('no').question.id, 502);
+  assert.equal(helper.answer('yes').outcome.name, 'Go now');
   assert.deepEqual(
-    cursor.path().map((step) => ({
-      questionIndex: step.questionIndex,
-      branch: step.branch
+    helper.history().map((step) => ({
+      questionId: step.question.id,
+      answer: step.answer
     })),
     [
       {
-        questionIndex: 0,
-        branch: 'right'
+        questionId: 501,
+        answer: 'no'
       },
       {
-        questionIndex: 1,
-        branch: 'left'
+        questionId: 502,
+        answer: 'yes'
       }
     ]
   );
 });
 
 test('starts from the server-provided initial cursor when present', () => {
-  const cursor = createDecisionTreeCursor({
+  const helper = loadDecisionTree({
     ...groupedQuestionDecisionTree,
     initialCursor: {
       nodePath: [],
@@ -307,26 +304,25 @@ test('starts from the server-provided initial cursor when present', () => {
     }
   });
 
-  assert.equal(cursor.current().questions[0].id, 502);
-  assert.equal(cursor.currentQuestionIndex(), 1);
-  assert.equal(cursor.answer('yes').outcome.name, 'Go now');
+  assert.equal(helper.current().question.id, 502);
+  assert.equal(helper.answer('yes').outcome.name, 'Go now');
 
-  assert.equal(cursor.reset().questions[0].id, 502);
-  assert.equal(cursor.answer('no').outcome.name, 'Home care');
+  assert.equal(helper.reset().question.id, 502);
+  assert.equal(helper.answer('no').outcome.name, 'Home care');
 });
 
 test('starts from a nested server-provided initial cursor', () => {
-  const cursor = createDecisionTreeCursor(nestedInitialCursorDecisionTree);
+  const helper = loadDecisionTree(nestedInitialCursorDecisionTree);
 
-  assert.equal(cursor.current().questions[0].id, 601);
-  assert.equal(cursor.answer('yes').outcome.name, 'Call now');
+  assert.equal(helper.current().question.id, 601);
+  assert.equal(helper.answer('yes').outcome.name, 'Call now');
 
-  assert.equal(cursor.reset().questions[0].id, 601);
-  assert.equal(cursor.answer('no').outcome.name, 'Home care');
+  assert.equal(helper.reset().question.id, 601);
+  assert.equal(helper.answer('no').outcome.name, 'Home care');
 });
 
 test('starts from the server-provided initial outcome when present', () => {
-  const cursor = createDecisionTreeCursor({
+  const helper = loadDecisionTree({
     ...decisionTree,
     initialOutcome: {
       nodePath: ['right'],
@@ -334,17 +330,16 @@ test('starts from the server-provided initial outcome when present', () => {
     }
   });
 
-  assert.equal(cursor.current().outcome.name, 'Home care');
-  assert.equal(cursor.currentQuestionIndex(), 0);
-  assert.equal(cursor.isComplete(), true);
-  assert.equal(cursor.answer('yes').outcome.name, 'Home care');
-  assert.equal(cursor.reset().outcome.name, 'Home care');
+  assert.equal(helper.current().outcome.name, 'Home care');
+  assert.equal(helper.isComplete(), true);
+  assert.equal(helper.answer('yes').outcome.name, 'Home care');
+  assert.equal(helper.reset().outcome.name, 'Home care');
 });
 
 test('rejects invalid initial cursors', () => {
   assert.throws(
     () =>
-      createDecisionTreeCursor({
+      loadDecisionTree({
         ...groupedQuestionDecisionTree,
         initialCursor: {
           nodePath: 'left',
@@ -357,7 +352,7 @@ test('rejects invalid initial cursors', () => {
 
   assert.throws(
     () =>
-      createDecisionTreeCursor({
+      loadDecisionTree({
         ...groupedQuestionDecisionTree,
         initialCursor: {
           nodePath: ['left'],
@@ -370,7 +365,7 @@ test('rejects invalid initial cursors', () => {
 
   assert.throws(
     () =>
-      createDecisionTreeCursor({
+      loadDecisionTree({
         ...groupedQuestionDecisionTree,
         initialCursor: {
           nodePath: [],
@@ -385,7 +380,7 @@ test('rejects invalid initial cursors', () => {
 test('rejects invalid initial outcomes', () => {
   assert.throws(
     () =>
-      createDecisionTreeCursor({
+      loadDecisionTree({
         ...decisionTree,
         initialOutcome: {
           nodePath: 'right',
@@ -397,7 +392,7 @@ test('rejects invalid initial outcomes', () => {
 
   assert.throws(
     () =>
-      createDecisionTreeCursor({
+      loadDecisionTree({
         ...decisionTree,
         initialOutcome: {
           nodePath: [],
@@ -409,7 +404,7 @@ test('rejects invalid initial outcomes', () => {
 
   assert.throws(
     () =>
-      createDecisionTreeCursor({
+      loadDecisionTree({
         ...decisionTree,
         initialOutcome: {
           nodePath: ['right'],
@@ -421,7 +416,7 @@ test('rejects invalid initial outcomes', () => {
 
   assert.throws(
     () =>
-      createDecisionTreeCursor({
+      loadDecisionTree({
         ...decisionTree,
         initialCursor: {
           nodePath: [],
@@ -440,7 +435,7 @@ test('rejects invalid initial outcomes', () => {
 test('rejects malformed serialized trees', () => {
   assert.throws(
     () =>
-      deserializeDecisionTree({
+      loadDecisionTree({
         ...decisionTree,
         schemaVersion: 'not-supported'
       }),
@@ -448,7 +443,7 @@ test('rejects malformed serialized trees', () => {
   );
   assert.throws(
     () =>
-      deserializeDecisionTree({
+      loadDecisionTree({
         ...decisionTree,
         targetSystem: 'cleartriage'
       }),
@@ -456,19 +451,19 @@ test('rejects malformed serialized trees', () => {
   );
   assert.throws(
     () =>
-      deserializeDecisionTree({
+      loadDecisionTree({
         ...decisionTree,
         nodes: [decisionTree.nodes[0]]
       }),
     DecisionTreeTraversalError
   );
   assert.throws(
-    () => deserializeDecisionTree({ ...decisionTree, nodes: [null] }),
+    () => loadDecisionTree({ ...decisionTree, nodes: [null] }),
     /Decision tree root is empty/
   );
   assert.throws(
     () =>
-      deserializeDecisionTree({
+      loadDecisionTree({
         ...decisionTree,
         nodes: [{ type: 'unsupported' }, null, null]
       }),
@@ -476,7 +471,7 @@ test('rejects malformed serialized trees', () => {
   );
   assert.throws(
     () =>
-      deserializeDecisionTree({
+      loadDecisionTree({
         ...decisionTree,
         nodes: [{ type: 'question', questions: [] }, null, null]
       }),
@@ -484,7 +479,7 @@ test('rejects malformed serialized trees', () => {
   );
   assert.throws(
     () =>
-      deserializeDecisionTree({
+      loadDecisionTree({
         ...decisionTree,
         nodes: [
           { type: 'question', questions: [{ id: 501, text: '' }] },
