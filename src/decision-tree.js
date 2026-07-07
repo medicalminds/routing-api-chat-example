@@ -60,6 +60,16 @@ const decisionTreeBranchForAnswer = (answer) => {
   return normalized === 'no' ? 'right' : 'left';
 };
 
+const decisionTreeAnswerKey = (answer) =>
+  answer === 'yes' ? 'yes' : answer === 'no' ? 'no' : 'unsure';
+
+const decisionTreeBranchForQuestionAnswer = (question, answer) => {
+  const branch = question?.answers?.[decisionTreeAnswerKey(answer)];
+  if (branch === 'left' || branch === 'right') return branch;
+
+  return decisionTreeBranchForAnswer(answer);
+};
+
 const validateDecisionTreeEnvelope = (decisionTree) => {
   if (!decisionTree || typeof decisionTree !== 'object') {
     throw new DecisionTreeTraversalError(
@@ -279,8 +289,8 @@ export const loadDecisionTree = (decisionTree) => {
         return valueForCurrent({ node: current, questionIndex, targets });
       }
 
-      const branch = decisionTreeBranchForAnswer(normalized);
       const question = currentQuestion(current, questionIndex);
+      const branch = decisionTreeBranchForQuestionAnswer(question, normalized);
       const nextQuestionIndex = questionIndex + 1;
       if (
         branch === 'right' &&

@@ -94,6 +94,118 @@ const groupedQuestionDecisionTree = {
   ]
 };
 
+const reversePolarityDecisionTree = {
+  ...decisionTree,
+  nodes: [
+    {
+      type: 'question',
+      source: 'main_screening',
+      questions: [
+        {
+          id: 501,
+          text: 'Can they breathe comfortably?',
+          answers: {
+            yes: 'left',
+            no: 'right',
+            unsure: 'right'
+          }
+        }
+      ]
+    },
+    {
+      type: 'outcome',
+      outcome: {
+        id: 7,
+        acuity: 7,
+        name: 'Home care',
+        text: 'Home care'
+      }
+    },
+    null,
+    null,
+    {
+      type: 'outcome',
+      outcome: {
+        id: 1,
+        acuity: 1,
+        name: 'Go now',
+        text: 'Go now'
+      }
+    },
+    null,
+    null
+  ]
+};
+
+const mixedPolarityMultipartDecisionTree = {
+  ...decisionTree,
+  nodes: [
+    {
+      type: 'question',
+      source: 'main_screening',
+      questions: [
+        {
+          id: 70,
+          text: 'Are they bleeding?',
+          answers: {
+            yes: 'left',
+            no: 'right',
+            unsure: 'left'
+          }
+        }
+      ]
+    },
+    {
+      type: 'question',
+      source: 'main_screening',
+      questions: [
+        {
+          id: 70,
+          text: 'Can the bleeding be stopped?',
+          answers: {
+            yes: 'left',
+            no: 'right',
+            unsure: 'right'
+          }
+        }
+      ]
+    },
+    {
+      type: 'outcome',
+      outcome: {
+        id: 7,
+        acuity: 7,
+        name: 'Home care',
+        text: 'Home care'
+      }
+    },
+    null,
+    null,
+    {
+      type: 'outcome',
+      outcome: {
+        id: 1,
+        acuity: 1,
+        name: 'Go now',
+        text: 'Go now'
+      }
+    },
+    null,
+    null,
+    {
+      type: 'outcome',
+      outcome: {
+        id: 7,
+        acuity: 7,
+        name: 'Home care',
+        text: 'Home care'
+      }
+    },
+    null,
+    null
+  ]
+};
+
 const nestedInitialCursorDecisionTree = {
   ...decisionTree,
   initialCursor: {
@@ -292,6 +404,33 @@ test('walks grouped questions one flat question at a time', () => {
       }
     ]
   );
+});
+
+test('uses public answer maps for reverse-polarity uncertainty', () => {
+  const helper = loadDecisionTree(reversePolarityDecisionTree);
+
+  assert.equal(helper.current().question.text, 'Can they breathe comfortably?');
+  assert.equal(helper.answer('unclear').outcome.name, 'Go now');
+
+  helper.reset();
+  assert.equal(helper.answer('maybe').outcome.name, 'Go now');
+
+  helper.reset();
+  assert.equal(helper.answer('yes').outcome.name, 'Home care');
+});
+
+test('uses public answer maps for mixed-polarity multipart prompts', () => {
+  const helper = loadDecisionTree(mixedPolarityMultipartDecisionTree);
+
+  assert.equal(helper.current().question.text, 'Are they bleeding?');
+  assert.equal(
+    helper.answer('unsure').question.text,
+    'Can the bleeding be stopped?'
+  );
+  assert.equal(helper.answer('unsure').outcome.name, 'Go now');
+
+  helper.reset();
+  assert.equal(helper.answer('no').outcome.name, 'Home care');
 });
 
 test('starts from the server-provided initial cursor when present', () => {
